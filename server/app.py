@@ -24,13 +24,13 @@ import routing  # noqa: E402
 from auth import (PERMISSIONS, ROLE_LABEL, audit, check_password, current_user, has_perm, hash_password,  # noqa: E402
                   issue_token, login_failed, login_ok, login_throttled, password_problem, public_user, require,
                   ward_allowed)
-from db import (BASE_DIR, DATA_DIR, POI_JSON, UPLOAD_DIR, all_settings, ex, get_setting, init_db, now, q,  # noqa: E402
+from db import (BASE_DIR, DATA_DIR, IS_PG, POI_JSON, UPLOAD_DIR, all_settings, ex, get_setting, init_db, load_media, now, q,  # noqa: E402
                 row2dict, set_setting)
 from geoutil import area_km2, bbox, centroid, haversine_m, point_in_geom, validate_geometry  # noqa: E402
 from media import save_upload  # noqa: E402
 from seed import seed_all  # noqa: E402
 
-VERSION = "1.0.0"
+VERSION = "1.3.0"
 WEB_DIR = os.path.join(BASE_DIR, "web")
 DEFAULT_MAX_UPLOAD_MB = "4" if os.environ.get("VERCEL") else "200"
 MAX_UPLOAD_MB = int(os.environ.get("XANH24_MAX_UPLOAD_MB", DEFAULT_MAX_UPLOAD_MB))
@@ -187,8 +187,10 @@ def fire_webhook(event, payload):
 def public_settings():
     s = all_settings()
     keep = ["app_name", "app_short", "org_name", "copyright", "region_name", "idle_timeout", "idle_warning",
-            "default_center", "default_zoom", "languages", "tiles", "transit", "kiosk", "public_base_url"]
+            "default_center", "default_zoom", "languages", "tiles", "transit", "kiosk", "public_base_url", "geocode"]
     out = {k: s.get(k) for k in keep}
+    if out.get("geocode"):
+        out["geocode"] = {k: v for k, v in out["geocode"].items() if k in ("enabled", "pick_hint")}
     ride = s.get("ride") or {}
     out["ride"] = {k: {kk: vv for kk, vv in v.items()} for k, v in ride.items() if v.get("enabled")}
     if out.get("kiosk"):
@@ -219,6 +221,14 @@ def admin_index():
 
 @app.route("/uploads/<path:p>")
 def uploads(p):
+    full = os.path.join(UPLOAD_DIR, p)
+    if not os.path.isfile(full) and IS_PG and ".." not in p:
+        m = load_media(p)  # tệp lưu trong Postgres → ghi lại bộ nhớ đệm đĩa rồi phục vụ
+        if not m:
+            abort(404)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "wb") as f:
+            f.write(m[1])
     resp = send_from_directory(UPLOAD_DIR, p, max_age=86400 * 30)
     return resp
 
@@ -264,7 +274,7 @@ def bootstrap():
                   hq=json.loads(r["hq"] or "null"), info=json.loads(r["info"] or "{}"),
                   poi_count=r["n"]) for r in
              q("SELECT w.*, (SELECT COUNT(*) FROM pois p WHERE p.ward_slug=w.slug AND p.status='published') n FROM wards w WHERE published=1 ORDER BY short")]
-    return jsonify(version=VERSION, settings=public_settings(), device=dev, categories=cats, modules=mods, wards=wards,
+    return jsonify(version=VERSION, data_version=data_version(), settings=public_settings(), device=dev, categories=cats, modules=mods, wards=wards,
                    server_time=now())
 
 
@@ -372,6 +382,54 @@ def public_route():
     return jsonify(res)
 
 
+@app.route("/api/public/reverse")
+def public_reverse():
+    """Thông tin một điểm bất kỳ: phường (theo ranh giới nội bộ) + địa chỉ (Nominatim/OSM)."""
+    try:
+        lat, lng = float(request.args["lat"]), float(request.args["lng"])
+    except Exception:
+        return err("Thiếu lat/lng")
+    if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+        return err("Toạ độ không hợp lệ")
+    import geocode
+    info = geocode.reverse(all_settings(), lat, lng, request.args.get("lang", "vi")) or {}
+    resp = jsonify(lat=lat, lng=lng, ward_slug=ward_for(lat, lng), name=info.get("name", ""), address=info.get("address", ""),
+                   road=info.get("road", ""), category=info.get("category", ""), type=info.get("type", ""), source="osm" if info else "none")
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
+
+
+@app.route("/api/public/geocode")
+def public_geocode():
+    """Tìm địa chỉ / địa điểm bất kỳ trong khu vực Hà Nội (không giới hạn các điểm đã nhập)."""
+    import geocode
+    q = (request.args.get("q") or "").strip()[:120]
+    try:
+        lat, lng = float(request.args.get("lat", 21.0278)), float(request.args.get("lng", 105.8342))
+    except ValueError:
+        lat, lng = 21.0278, 105.8342
+    items = geocode.search(all_settings(), q, lat, lng, request.args.get("lang", "vi"))
+    for it in items:
+        it["ward_slug"] = ward_for(it["lat"], it["lng"])
+    resp = jsonify(items=items)
+    resp.headers["Cache-Control"] = "public, max-age=3600"
+    return resp
+
+
+@app.route("/api/public/geolocate", methods=["POST"])
+def public_geolocate():
+    """Kiosk không có GPS gửi danh sách Wi-Fi xung quanh → trả toạ độ (giống cách Google Maps định vị)."""
+    import geocode
+    d = body()
+    wifi = [w for w in (d.get("wifi") or []) if isinstance(w, dict)][:60]
+    cells = [c for c in (d.get("cells") or []) if isinstance(c, dict)][:10]
+    r = geocode.wifi_locate(all_settings(), wifi, cells)
+    if not r:
+        return err("Không xác định được vị trí từ Wi-Fi", 404)
+    r["ward_slug"] = ward_for(r["lat"], r["lng"])
+    return jsonify(r)
+
+
 @app.route("/api/public/events", methods=["POST"])
 def public_events():
     d = body()
@@ -413,7 +471,40 @@ def heartbeat():
         ex("UPDATE devices SET last_seen=?, last_ip=?, user_agent=?, screen=? WHERE code=?",
            (now(), request.headers.get("X-Forwarded-For", request.remote_addr), request.headers.get("User-Agent", "")[:300],
             str(d.get("screen") or "")[:40], code))
-    return jsonify(ok=True, server_time=now(), config_version=get_setting("config_version", 0))
+        g = d.get("gps") or {}
+        try:
+            glat, glng = float(g["lat"]), float(g["lng"])
+            gacc = float(g["acc"]) if g.get("acc") is not None else 9999.0
+        except (KeyError, TypeError, ValueError):
+            glat = None
+        if glat is not None and -90 <= glat <= 90 and -180 <= glng <= 180:
+            # Vị trí thực tế do thiết bị báo về (GPS/Wi-Fi của máy Android hoặc trình duyệt)
+            ex("UPDATE devices SET gps_lat=?, gps_lng=?, gps_acc=?, gps_src=?, gps_at=? WHERE code=?",
+               (glat, glng, gacc, str(g.get("src") or "")[:20], now(), code))
+            dev = q("SELECT id, lat, ward_slug FROM devices WHERE code=?", (code,), one=True)
+            if dev and dev["lat"] is None and gacc <= 100:
+                # Máy mới chưa khai báo vị trí → tự lấy vị trí GPS làm vị trí đặt máy
+                ex("UPDATE devices SET lat=?, lng=?, ward_slug=COALESCE(ward_slug, ?) WHERE code=?",
+                   (glat, glng, ward_for(glat, glng), code))
+    return jsonify(ok=True, server_time=now(), config_version=get_setting("config_version", 0), data_version=data_version())
+
+
+DATA_ACTIONS = ("poi.", "revision.", "ads.", "category.", "ward.", "transit.", "module.", "settings.", "device.", "import.commit")
+
+
+def data_version():
+    """Mốc thay đổi dữ liệu công khai gần nhất — kiosk/ứng dụng Android dùng để tự cập nhật."""
+    cond = " OR ".join("action LIKE ?" for _ in DATA_ACTIONS)
+    r = q(f"SELECT MAX(at) AS v FROM audit WHERE {cond}", tuple(a + ("%" if a.endswith(".") else "") for a in DATA_ACTIONS), one=True)
+    r2 = q("SELECT MAX(COALESCE(published_at, updated_at, 0)) AS v FROM pois", one=True)
+    return max((r and r["v"]) or 0, (r2 and r2["v"]) or 0, get_setting("config_version", 0) or 0)
+
+
+@app.route("/api/public/version")
+def public_version():
+    """Kiểm tra nhanh có dữ liệu mới hay không (dùng cho ứng dụng kiosk Android)."""
+    return jsonify(data_version=data_version(), config_version=get_setting("config_version", 0), server_time=now(), app_version=VERSION,
+                   kiosk_app=get_setting("kiosk_app", {}) or {})
 
 
 # ======================================================================= auth
@@ -475,7 +566,7 @@ def stats():
         days.append({"day": k, **by_day.get(k, {})})
     top = [dict(id=r["poi_id"], name=r["name"], n=r["n"]) for r in
            q("""SELECT e.poi_id, p.name, COUNT(*) n FROM events e JOIN pois p ON p.id=e.poi_id
-                WHERE e.type='poi_view' AND e.at>=? GROUP BY e.poi_id ORDER BY n DESC LIMIT 10""", (since,))]
+                WHERE e.type='poi_view' AND e.at>=? GROUP BY e.poi_id, p.name ORDER BY n DESC LIMIT 10""", (since,))]
     types = {r["type"]: r["n"] for r in q("SELECT type, COUNT(*) n FROM events WHERE at>=? GROUP BY type", (since,))}
     devs = q("SELECT code,name,last_seen FROM devices WHERE active=1")
     online = sum(1 for d in devs if d["last_seen"] and t - d["last_seen"] < 180)
@@ -907,7 +998,7 @@ def admin_ad_delete(aid):
 
 
 # ---- devices
-DEV_FIELDS = ["code", "name", "ward_slug", "address", "lat", "lng", "bearing", "orientation", "idle_timeout", "config", "notes", "active"]
+DEV_FIELDS = ["code", "name", "ward_slug", "address", "lat", "lng", "bearing", "orientation", "idle_timeout", "config", "notes", "active", "location_mode"]
 
 
 @app.route("/api/admin/devices")
@@ -1182,7 +1273,7 @@ def admin_settings():
 def admin_settings_save():
     d = body()
     allowed = {"app_name", "app_short", "org_name", "copyright", "region_name", "idle_timeout", "idle_warning",
-               "default_center", "default_zoom", "tiles", "routing", "ride", "transit", "kiosk", "public_base_url", "languages"}
+               "default_center", "default_zoom", "tiles", "routing", "ride", "transit", "kiosk", "public_base_url", "languages", "geocode", "kiosk_app"}
     for k, v in d.items():
         if k in allowed:
             if k == "idle_timeout":
@@ -1314,11 +1405,18 @@ def not_found(e):
 
 # ======================================================================= bootstrap
 def create_app():
-    init_db()
-    with app.app_context():
-        seed_all(log=lambda m: print(m))
-        from modules import load_plugins
-        load_plugins(app)
+    # Postgres: khoá tư vấn để nhiều tiến trình khởi động cùng lúc (VD: Vercel) không tạo dữ liệu mẫu trùng
+    if IS_PG:
+        ex("SELECT pg_advisory_lock(2424)")
+    try:
+        init_db()
+        with app.app_context():
+            seed_all(log=lambda m: print(m))
+            from modules import load_plugins
+            load_plugins(app)
+    finally:
+        if IS_PG:
+            ex("SELECT pg_advisory_unlock(2424)")
     return app
 
 

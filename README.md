@@ -10,6 +10,7 @@ Bản đồ số hành chính & dịch vụ công cho màn hình LCD Android tư
 - Ranh giới **51 phường/xã Hà Nội mới (từ 01/07/2025)** số hoá từ bản đồ phương án của Sở Nội vụ, chuyển VN-2000 → WGS84 (xem `docs/RANH_GIOI.md`).
 - Tìm kiếm không cần gõ dấu, khám phá theo danh mục, địa điểm nổi bật, địa điểm gần đây.
 - **Chỉ đường** tới mọi điểm trên bản đồ: đi bộ, xe đạp, xe máy/ô tô — lộ trình vẽ trên bản đồ nền, hướng dẫn từng bước tiếng Việt/Anh, mã QR để mang lộ trình theo điện thoại.
+- **Chọn điểm bất kỳ trên bản đồ**: chạm vào vị trí bất kỳ (hoặc tên cửa hàng, trường học… trên bản đồ nền) → ghim điểm, hiện địa chỉ, phường, toạ độ, địa điểm và bến xe gần đó; chỉ đường (đi bộ, xe đạp, xe máy, buýt/metro), gọi Grab/Xanh SM, QR mang theo.
 - Chọn phường: vùng phường được làm nổi bật (viền xanh đậm, phần ngoài phường làm tối).
 - **Xe buýt & Metro**: tự tìm tuyến buýt (dữ liệu OpenStreetMap qua Overpass) và Metro đi thẳng từ điểm xuất phát tới đích, vẽ lộ trình đi bộ → lên xe → xuống xe → đi bộ trên bản đồ, nhiều phương án để chọn; danh sách bến buýt/ga metro gần nhất kèm nút “Dẫn tới bến”; QR tra cứu xe buýt thời gian thực.
 - **Gọi Grab / Xanh SM** tới địa điểm đã chọn: QR Grab là link OneLink (https) → camera điện thoại mở thẳng ứng dụng Grab đã cài, điểm đến điền sẵn (chưa cài → trang tải ứng dụng). Xanh SM chưa công bố deep link điền điểm đến → QR mở trang trung gian: Android mở thẳng ứng dụng (`com.gsm.customer`), iOS qua App Store, địa chỉ được sao chép sẵn để dán, kèm hotline.
@@ -75,7 +76,28 @@ Sau khi có tên miền: *Dashboard → Cấu hình → Địa chỉ công khai*
 
 Dòng lệnh: `python server/manage.py create-user <user> <S0|S1|CW> <mật khẩu>` · `reset-password <user> <mật khẩu>`.
 
+## Chạy thật trên www.xanh24.com (Vercel + Postgres)
+
+Vercel không có ổ đĩa bền: nếu chỉ dùng SQLite, dữ liệu quản trị (địa điểm, vị trí kiosk, ảnh tải lên…) **sẽ mất** mỗi khi máy chủ khởi động lại. Từ v1.2 hệ thống hỗ trợ Postgres:
+
+1. Vercel → dự án → **Storage → Create Database → Neon (Postgres)** → Connect vào dự án (tự thêm biến `DATABASE_URL`/`POSTGRES_URL`). Hoặc dùng Supabase/Neon bất kỳ và tự thêm `DATABASE_URL=postgresql://…?sslmode=require`.
+2. **Settings → Environment Variables**: `XANH24_SECRET` (chuỗi ngẫu nhiên dài), `XANH24_ADMIN_PASSWORD` (mật khẩu `admin`).
+3. Đẩy mã lên nhánh `main` → Vercel tự triển khai. Lần chạy đầu tự tạo bảng và dữ liệu mẫu trong Postgres; ảnh tải lên được lưu trong CSDL (bảng `media_files`).
+4. Kiểm tra: `https://www.xanh24.com/api/public/version` phải trả JSON có `data_version`.
+
+Máy chủ riêng (VPS/Docker) vẫn dùng SQLite mặc định; đặt `DATABASE_URL` nếu muốn dùng Postgres.
+
+## Vị trí “Bạn đang ở đây”
+- **Định vị kiosk qua Wi-Fi (khuyến nghị):** tạo khoá *Geolocation API* trong Google Cloud (bật thanh toán; dịch vụ thuộc nhóm Essentials có hạn mức miễn phí hằng tháng), thêm biến môi trường `GOOGLE_GEOLOCATION_API_KEY` trên Vercel. Mỗi kiosk chỉ hỏi vài lần/ngày. Không có khoá, hệ thống dùng beaconDB (miễn phí, dữ liệu Việt Nam còn ít).
+- **Điện thoại / máy tính:** tự hỏi quyền vị trí khi mở, dùng vị trí thật (vòng tròn thể hiện sai số) làm điểm xuất phát chỉ đường; nếu từ chối, dùng điểm tạm và nhắc bật định vị.
+- **Kiosk (ứng dụng Android):** ưu tiên (1) vị trí kỹ thuật viên ghim trong menu cài đặt của ứng dụng → (2) GPS/Wi-Fi của thiết bị nếu sai số ≤ 100 m (hoặc khi toạ độ khai báo lệch xa vị trí thật) → (3) toạ độ khai báo ở Dashboard. Kiosk báo vị trí về máy chủ mỗi phút; Dashboard → Màn hình kiosk hiển thị “Vị trí thiết bị báo về” và nút *Dùng vị trí này*; chọn nguồn vị trí: Tự động / Cố định / Theo GPS.
+- Màn hình LCD thường **không có chip GPS** — vị trí lấy theo Wi-Fi (sai số 20–100 m). Để chính xác tuyệt đối, ghim toạ độ khi lắp đặt (đứng tại máy, mở Google Maps trên điện thoại, nhấn giữ vị trí để lấy toạ độ, nhập vào menu cài đặt của ứng dụng hoặc Dashboard).
+
 ## Cài đặt màn hình LCD Android
+
+**Cách khuyến nghị: ứng dụng `Xanh24 Kiosk` (APK)** — xem `android/README.md`. Tải tại `https://<tên-miền>/downloads/Xanh24-Kiosk.apk`, mở lần đầu nhập địa chỉ máy chủ + mã màn hình. Ứng dụng tự chạy toàn màn hình, tự tải lại khi mất mạng/treo, tự cập nhật dữ liệu khi quản trị duyệt nội dung mới.
+
+Cách khác (trình duyệt kiosk):
 
 1. Thêm màn hình tại *Dashboard → Màn hình kiosk* (mã, phường, vị trí đặt máy trên bản đồ — hiển thị “Bạn đang ở đây” và là điểm xuất phát chỉ đường).
 2. Trên thiết bị: cài **Fully Kiosk Browser** (khuyến nghị) hoặc Chrome + ghim ứng dụng. Trang khởi động = `https://<tên-miền>/?device=<MÃ>` (nút “Cài đặt” có sẵn QR).
@@ -130,3 +152,29 @@ docs/              API, module, phương pháp số hoá ranh giới
 ```bash
 python tests/test_api.py
 ```
+
+## Nhật ký thay đổi
+
+**v1.3.0 (30/09/2026)**
+- Tìm **địa chỉ / địa điểm bất kỳ** ngay trong ô tìm kiếm (OpenStreetMap: Photon, dự phòng Nominatim; khoanh vùng Hà Nội) → chạm để ghim và chỉ đường.
+- Kiosk không có GPS: ứng dụng Android quét Wi-Fi xung quanh và hỏi `/api/public/geolocate` (Google Geolocation API nếu đặt `GOOGLE_GEOLOCATION_API_KEY`, dự phòng beaconDB). Ghim vị trí máy bằng cách chạm bản đồ → menu thiết bị → *Ghim điểm vừa chạm*.
+- Chế độ nhẹ cho kiosk/TV: vẽ 1×, bỏ nhà 3D/hiệu ứng, tái sử dụng marker; WebView không ép hardware layer.
+
+**v1.2.0 (30/09/2026)**
+- Vị trí thật: web/điện thoại tự định vị; kiosk dùng GPS/Wi-Fi của thiết bị hoặc vị trí ghim trong ứng dụng, báo về máy chủ; Dashboard chọn nguồn vị trí.
+- Hỗ trợ Postgres qua `DATABASE_URL` (dữ liệu và ảnh không mất khi chạy trên Vercel).
+- Ứng dụng Android 1.1.0: quyền Vị trí, ghim vị trí đặt máy, tương thích máy chủ cũ.
+
+**v1.1.0 (30/09/2026)**
+- Chọn điểm bất kỳ trên bản đồ + chỉ đường/gọi xe/QR tới điểm đó; API `/api/public/reverse` (Nominatim, có đệm, 1 yêu cầu/giây; đổi máy chủ tại cấu hình `geocode.reverse_url`).
+- Bộ nhớ đệm ngoại tuyến (`web/sw.js`): giao diện, dữ liệu công khai, ô bản đồ nền, ảnh — kiosk khởi động nhanh và vẫn chạy khi mất mạng.
+- Tự cập nhật dữ liệu: `data_version` trong heartbeat/`/api/public/version`; kiosk tự nạp lại khi về chế độ chờ.
+- Ứng dụng Android kiosk `android/` (APK ký sẵn trong `web/downloads/`).
+
+**v1.0.1 (25/09/2026)** — theo góp ý chạy thử:
+1. Chọn phường: viền xanh đậm + quầng trắng, tô nhạt vùng phường, làm tối phần ngoài phường.
+2. Lộ trình được vẽ trên bản đồ nền (nét liền cho xe, nét chấm cho đi bộ). Lỗi không hiện đường chỉ có ở bản chạy thử 1 tệp (dữ liệu giả lập tạo ở khung ngoài), bản cài đặt thật không bị.
+3. Bản chạy thử: gộp thanh công cụ demo vào nút trong thanh tiêu đề của ứng dụng.
+4. QR Grab dùng link OneLink → mở thẳng ứng dụng Grab; Xanh SM mở ứng dụng trên Android + sao chép địa chỉ.
+5. Chế độ Buýt · Metro tìm tuyến buýt OSM đi thẳng, vẽ tuyến theo đường thực tế, liệt kê bến gần nhất (nút “Dẫn tới bến”); các chế độ khác có mục “Bến xe buýt & ga Metro gần bạn”.
+6. Bản đồ nền mặc định chuyển sang OpenFreeMap (CARTO đã yêu cầu API key).

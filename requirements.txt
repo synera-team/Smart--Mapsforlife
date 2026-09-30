@@ -4,3 +4,4 @@ PyJWT>=2.8,<3
 openpyxl>=3.1,<4
 Pillow>=10.0
 gunicorn>=22.0
+psycopg[binary]>=3.1  # chỉ dùng khi đặt DATABASE_URL (Postgres: Neon, Supabase, Vercel Postgres)

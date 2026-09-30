@@ -79,6 +79,8 @@ DEFAULT_SETTINGS = {
         "walk_radius_m": 900,
         "overpass": ["https://overpass-api.de/api/interpreter", "https://overpass.private.coffee/api/interpreter", "https://maps.mail.ru/osm/tools/overpass/api/interpreter"],
     },
+    "kiosk_app": {"version": "1.3.0", "version_code": 4, "apk_url": "/downloads/Xanh24-Kiosk-1.3.0.apk"},
+    "geocode": {"enabled": True, "reverse_url": "https://nominatim.openstreetmap.org/reverse", "pick_hint": True},
     "kiosk": {"on_screen_keyboard": True, "show_clock": True, "show_ward_boundaries": True,
               "start_screen": "idle", "admin_exit_pin": "2424"},
     "public_base_url": "",

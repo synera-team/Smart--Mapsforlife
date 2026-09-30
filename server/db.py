@@ -3,8 +3,10 @@
 Một file SQLite duy nhất (data/xanh24.db) để dễ triển khai trên máy chủ nhỏ hoặc
 mini-PC tại UBND. WAL mode cho phép đọc song song khi kiosk truy cập nhiều.
 """
+import decimal
 import json
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -138,6 +140,8 @@ CREATE TABLE IF NOT EXISTS devices(
   notes TEXT DEFAULT '',
   active INTEGER DEFAULT 1,
   last_seen INTEGER, last_ip TEXT, user_agent TEXT, screen TEXT,
+  location_mode TEXT DEFAULT 'auto',
+  gps_lat REAL, gps_lng REAL, gps_acc REAL, gps_src TEXT, gps_at INTEGER,
   created_at INTEGER
 );
 
@@ -209,7 +213,150 @@ def now():
     return int(time.time())
 
 
+def _find_db_url():
+    """DATABASE_URL, POSTGRES_URL, hoặc biến *_URL bất kỳ trỏ tới Postgres (VD: STORAGE_URL do Vercel/Neon tạo)."""
+    for k in ("DATABASE_URL", "POSTGRES_URL"):
+        if os.environ.get(k, "").strip().startswith(("postgres://", "postgresql://")):
+            return os.environ[k].strip()
+    for k, v in sorted(os.environ.items()):
+        if k.endswith("_URL") and "UNPOOLED" not in k and "NON_POOLING" not in k and v.strip().startswith(("postgres://", "postgresql://")):
+            return v.strip()
+    return ""
+
+
+DATABASE_URL = _find_db_url()
+IS_PG = DATABASE_URL.startswith(("postgres://", "postgresql://"))
+
+# Bảng lưu tệp tải lên trong CSDL — dùng khi chạy Postgres (VD: Vercel, ổ đĩa không bền)
+MEDIA_SCHEMA = """
+CREATE TABLE IF NOT EXISTS media_files(
+  path TEXT PRIMARY KEY,
+  mime TEXT,
+  data BLOB,
+  size INTEGER,
+  created_at INTEGER
+);
+"""
+
+
+# ---------------------------------------------------------------- Postgres (tuỳ chọn)
+class _Row(dict):
+    """Hàng kết quả: truy cập được theo tên cột r["col"] và theo vị trí r[0] như sqlite3.Row."""
+    __slots__ = ("_vals",)
+
+    def __init__(self, cols, vals):
+        super().__init__(zip(cols, vals))
+        self._vals = vals
+
+    def __getitem__(self, k):
+        return self._vals[k] if isinstance(k, int) else dict.__getitem__(self, k)
+
+
+class _Cur:
+    def __init__(self, rows, lastrowid=None):
+        self._rows, self.lastrowid = rows, lastrowid
+
+    def fetchall(self):
+        return self._rows
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+
+def _pg_sql(sql):
+    """Chuyển câu lệnh SQLite sang Postgres: ? → %s, % → %%, LIKE → ILIKE (không phân biệt hoa thường như SQLite)."""
+    out, quote = [], False
+    for ch in sql:
+        if ch == "'":
+            quote = not quote
+            out.append(ch)
+        elif ch == "?" and not quote:
+            out.append("%s")
+        elif ch == "%":
+            out.append("%%")
+        else:
+            out.append(ch)
+    return re.sub(r"\bLIKE\b", "ILIKE", "".join(out))
+
+
+def _pg_schema(sql):
+    sql = re.sub(r"(?im)^\s*PRAGMA[^;]*;\s*$", "", sql)
+    sql = re.sub(r"INTEGER PRIMARY KEY AUTOINCREMENT", "BIGSERIAL PRIMARY KEY", sql)
+    sql = re.sub(r"\bREAL\b", "DOUBLE PRECISION", sql)
+    sql = re.sub(r"\bBLOB\b", "BYTEA", sql)
+    sql = re.sub(r"\bINTEGER\b", "BIGINT", sql)
+    return sql
+
+
+ID_TABLES = set(re.findall(r"CREATE TABLE IF NOT EXISTS (\w+)\(\s*id INTEGER PRIMARY KEY AUTOINCREMENT", SCHEMA))
+
+
+def _pg_val(v):
+    if isinstance(v, bool):
+        return int(v)
+    return v
+
+
+def _py_val(v):
+    if isinstance(v, decimal.Decimal):
+        return int(v) if v == v.to_integral_value() else float(v)
+    if isinstance(v, memoryview):
+        return bytes(v)
+    return v
+
+
+class _PgConn:
+    def __init__(self):
+        import psycopg  # pip install "psycopg[binary]"
+        # prepare_threshold=None: tương thích PgBouncer / pooler của Neon, Supabase, Vercel Postgres
+        self.c = psycopg.connect(DATABASE_URL, autocommit=True, prepare_threshold=None, connect_timeout=15)
+
+    def execute(self, sql, args=()):
+        s = sql.strip()
+        if re.match(r"(?is)CREATE\s+(TABLE|INDEX)", s):
+            t = re.match(r"(?is)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\s*\(\s*id\s+INTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT", s)
+            if t:
+                ID_TABLES.add(t.group(1))  # bảng của module mở rộng
+            s = _pg_schema(s)
+            with self.c.cursor() as cur:
+                cur.execute(s)
+            return _Cur([])
+        m = re.match(r"(?is)INSERT\s+INTO\s+(\w+)", s)
+        ret = bool(m and m.group(1) in ID_TABLES and "RETURNING" not in s.upper())
+        s = _pg_sql(s) + (" RETURNING id" if ret else "")
+        with self.c.cursor() as cur:
+            cur.execute(s, tuple(_pg_val(a) for a in (args or ())))
+            rows, last = [], None
+            if cur.description:
+                cols = [d.name for d in cur.description]
+                rows = [_Row(cols, [_py_val(v) for v in r]) for r in cur.fetchall()]
+                if ret and rows:
+                    last = rows[0][0]
+            return _Cur(rows, last)
+
+    def executescript(self, script):
+        for stmt in script.split(";"):
+            if stmt.strip():
+                with self.c.cursor() as cur:
+                    cur.execute(stmt)
+
+    def commit(self):
+        pass
+
+    def close(self):
+        try:
+            self.c.close()
+        except Exception:
+            pass
+
+    @property
+    def closed(self):
+        return self.c.closed
+
+
 def connect():
+    if IS_PG:
+        return _PgConn()
     os.makedirs(DATA_DIR, exist_ok=True)
     conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -219,17 +366,55 @@ def connect():
 
 def get_db():
     conn = getattr(_local, "conn", None)
+    if conn is not None and IS_PG and conn.closed:
+        conn = None
     if conn is None:
         conn = connect()
         _local.conn = conn
     return conn
 
 
+# Cột bổ sung ở các phiên bản sau — tự thêm vào cơ sở dữ liệu cũ khi khởi động
+MIGRATIONS = {
+    "devices": {"location_mode": "TEXT DEFAULT 'auto'", "gps_lat": "REAL", "gps_lng": "REAL", "gps_acc": "REAL",
+                "gps_src": "TEXT", "gps_at": "INTEGER"},
+}
+
+
 def init_db():
+    os.makedirs(DATA_DIR, exist_ok=True)
     conn = connect()
+    if IS_PG:
+        conn.executescript(_pg_schema(SCHEMA + MEDIA_SCHEMA))
+        for table, cols in MIGRATIONS.items():
+            for col, typ in cols.items():
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {_pg_schema(typ)}")
+        conn.close()
+        return
     conn.executescript(SCHEMA)
+    for table, cols in MIGRATIONS.items():
+        have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        for col, typ in cols.items():
+            if col not in have:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
     conn.commit()
     conn.close()
+
+
+def store_media(rel_path, data, mime=""):
+    """Khi dùng Postgres: lưu thêm tệp tải lên vào CSDL để không mất khi máy chủ khởi động lại."""
+    if not IS_PG:
+        return
+    ex("INSERT INTO media_files(path,mime,data,size,created_at) VALUES(?,?,?,?,?) "
+       "ON CONFLICT(path) DO UPDATE SET data=excluded.data, mime=excluded.mime, size=excluded.size",
+       (rel_path, mime, data, len(data), now()))
+
+
+def load_media(rel_path):
+    if not IS_PG:
+        return None
+    r = q("SELECT mime, data FROM media_files WHERE path=?", (rel_path,), one=True)
+    return (r["mime"], r["data"]) if r else None
 
 
 def q(sql, args=(), one=False):

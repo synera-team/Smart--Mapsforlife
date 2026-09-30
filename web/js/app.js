@@ -12,17 +12,21 @@ const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch { } }, del(k) { try { localStorage.removeItem(k); } catch { } } };
 const params = new URLSearchParams(location.search);
+// Ứng dụng Android có thể gửi vị trí trước khi bản đồ tải xong → giữ lại bản mới nhất
+window.__x24NatLoc = null;
+window.X24NativeLocation = (l) => { window.__x24NatLoc = l; };
 if (params.get('device')) store.set('x24_device', params.get('device'));
 if (params.get('mode') === 'web') { store.del('x24_device'); store.del('x24_kiosk'); }
 if (params.get('mode') === 'kiosk') store.set('x24_kiosk', '1');
 const DEVICE = params.get('device') || store.get('x24_device') || '';
 const KIOSK = params.get('mode') !== 'web' && (params.get('mode') === 'kiosk' || !!DEVICE || store.get('x24_kiosk') === '1');
 const MOBILE = () => window.innerWidth < 700;
+const LITE = params.get('lite') === '1' || (params.get('lite') !== '0' && (store.get('x24_lite') === '1' || !!(window.X24Android) || KIOSK));
 
 // ---------------------------------------------------------------- i18n
 const I18N = {
   vi: {
-    kicker: 'Bản đồ số', hello: 'Xin chào!', helloSub: 'Bạn muốn đi đâu hôm nay?', youAreHere: 'Bạn đang ở đây', explore: 'Khám phá theo nhóm',
+    pickHint: 'Chạm vào vị trí bất kỳ trên bản đồ để xem thông tin và chỉ đường tới đó', pinned: 'Điểm đã chọn', pinAddr: 'Đang tra địa chỉ…', nearPlaces: 'Địa điểm gần điểm này', viewWard: 'Xem phường', outside: 'Ngoài 51 phường/xã trên nền tảng', pickAgain: 'Chạm bản đồ để chọn điểm khác', kicker: 'Bản đồ số', hello: 'Xin chào!', helloSub: 'Bạn muốn đi đâu hôm nay?', youAreHere: 'Bạn đang ở đây', explore: 'Khám phá theo nhóm',
     featured: 'Địa điểm nổi bật', utilities: 'Tiện ích khác', seeAll: 'Xem tất cả', quick: 'Truy cập nhanh', wards: 'Phường / Xã', wardsSub: 'Ranh giới hành chính mới',
     transit: 'Xe buýt & Metro', transitSub: 'Tuyến, nhà ga gần đây', near: 'Gần bạn', nearSub: 'Trong bán kính 1 km', search: 'Tìm địa điểm, cơ quan, phường…',
     inWard: 'Trong phường', allCity: 'Toàn thành phố', results: 'kết quả', noResult: 'Không tìm thấy kết quả phù hợp', places: 'Địa điểm', stations: 'Nhà ga / Trạm dừng',
@@ -39,7 +43,7 @@ const I18N = {
     wardInfo: 'Thông tin phường', wardList: 'Danh sách phường / xã', searchWard: 'Tìm phường…', modules: 'Tiện ích',
   },
   en: {
-    kicker: 'Digital map', hello: 'Hello!', helloSub: 'Where would you like to go today?', youAreHere: 'You are here', explore: 'Explore by category',
+    pickHint: 'Tap anywhere on the map to see details and get directions', pinned: 'Selected point', pinAddr: 'Looking up address…', nearPlaces: 'Places near this point', viewWard: 'View ward', outside: 'Outside the covered wards', pickAgain: 'Tap the map to pick another point', kicker: 'Digital map', hello: 'Hello!', helloSub: 'Where would you like to go today?', youAreHere: 'You are here', explore: 'Explore by category',
     featured: 'Featured places', utilities: 'More services', seeAll: 'See all', quick: 'Quick access', wards: 'Wards / Communes', wardsSub: 'New administrative boundaries',
     transit: 'Bus & Metro', transitSub: 'Lines and nearby stations', near: 'Near you', nearSub: 'Within 1 km', search: 'Search places, offices, wards…',
     inWard: 'In this ward', allCity: 'Whole city', results: 'results', noResult: 'No matching results', places: 'Places', stations: 'Stations / Stops',
@@ -90,6 +94,12 @@ function flushEvents() { if (!S.events.length) return; const events = S.events.s
 
 // ---------------------------------------------------------------- boot
 let map, osk;
+function registerSW() {
+  // Bộ nhớ đệm ngoại tuyến: giao diện, dữ liệu, bản đồ nền → kiosk khởi động nhanh, vẫn chạy khi mạng chập chờn
+  if (!('serviceWorker' in navigator) || !(location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) return;
+  if (S.settings.offline_cache === false) { navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister())); return; }
+  navigator.serviceWorker.register('/sw.js').catch(() => { });
+}
 async function boot() {
   document.body.classList.toggle('kiosk', KIOSK);
   document.documentElement.lang = LANG;
@@ -99,7 +109,8 @@ async function boot() {
   $('#copyright').textContent = S.settings.copyright || 'Bản quyền thuộc về Công ty TNHH Công nghệ và Truyền thông Xanh24';
   $('#idleFoot').textContent = $('#copyright').textContent;
   document.title = S.settings.app_name || 'Xanh24 - Maps for Life';
-  if (S.device && S.device.lat) S.origin = { lat: S.device.lat, lng: S.device.lng, label: t('youAreHere'), kind: 'kiosk' };
+  const nat0 = nativeLoc(); if (nat0?.lat) S.live = { lat: nat0.lat, lng: nat0.lng, acc: nat0.acc || 0, src: nat0.src || 'android', at: Date.now() };
+  S.origin = resolveOrigin();
   if (S.device?.ward_slug) { S.selWard = S.device.ward_slug; S.scope = 'ward'; }
   const fromP = params.get('from');
   if (fromP) { const [la, ln] = fromP.split(',').map(Number); if (la && ln) S.origin = { lat: la, lng: ln, label: t('start'), kind: 'shared' }; }
@@ -115,9 +126,12 @@ async function boot() {
   initMap();
   initUI();
   go({ v: 'home' }, false);
+  startGeo();
   if (params.get('poi')) { openPoi(+params.get('poi'), { dir: params.get('dir') }); }
+  else if (params.get('pt')) { const [la, ln] = params.get('pt').split(',').map(Number); if (la && ln) { const id = pickAt({ lat: la, lng: ln }, { name: params.get('name') || '' }); if (params.get('dir')) startRoute(id, params.get('dir')); } }
   else if (params.get('ward')) openWard(params.get('ward'));
   if (KIOSK) initKiosk();
+  registerSW();
   track('session_start', { kiosk: KIOSK });
 }
 
@@ -147,21 +161,25 @@ function initMap() {
   S.tileId = store.get('x24_tiles') || S.settings.tiles?.active;
   if (!(S.settings.tiles?.options || []).some(o => o.id === S.tileId)) S.tileId = S.settings.tiles?.active || (S.settings.tiles?.options || [])[0]?.id;
   const c = S.settings.default_center || [105.8342, 21.0278];
+  document.body.classList.toggle('lite', LITE);
   map = new maplibregl.Map({
     container: 'map', style: styleFor(S.tileId),
     center: c, zoom: S.settings.default_zoom || 12.3, minZoom: 9, maxZoom: 19, attributionControl: { compact: true },
-    dragRotate: false, pitchWithRotate: false, touchPitch: false, maxBounds: [[104.9, 20.4], [106.4, 21.5]],
+    dragRotate: false, pitchWithRotate: false, touchPitch: false, maxBounds: [[104.9, 20.4], [106.4, 21.5]], maxPitch: 0,
+    // Chế độ nhẹ cho màn hình kiosk/TV: vẽ ở mật độ điểm ảnh 1×, tắt hiệu ứng mờ dần, giới hạn bộ nhớ ô bản đồ
+    pixelRatio: LITE ? 1 : Math.min(window.devicePixelRatio || 1, 2), fadeDuration: LITE ? 0 : 300,
+    antialias: false, refreshExpiredTiles: false, maxTileCacheSize: LITE ? 120 : null, renderWorldCopies: false,
   });
   map.touchZoomRotate.disableRotation();
   // Nguồn bản đồ nền lỗi liên tục → tự chuyển sang nguồn kế tiếp
   map.on('error', (e) => {
-    const sid = e.sourceId || ''; if (sid && ['wards', 'mask', 'route', 'transit'].includes(sid)) return;
+    const sid = e.sourceId || ''; if (sid && ['wards', 'mask', 'route', 'transit', 'here-acc'].includes(sid)) return;
     if (!tilesOk && ++tileFails > 8) {
       const opts = S.settings.tiles?.options || []; const i = opts.findIndex(o => o.id === S.tileId);
       const next = opts[(i + 1) % opts.length]; if (next && next.id !== S.tileId) { tileFails = 0; setTiles(next.id, false); }
     }
   });
-  map.on('sourcedata', (e) => { if (e.tile && !['wards', 'mask', 'route', 'transit'].includes(e.sourceId)) tilesOk = true; });
+  map.on('sourcedata', (e) => { if (e.tile && !['wards', 'mask', 'route', 'transit', 'here-acc'].includes(e.sourceId)) tilesOk = true; });
   map.on('style.load', addOverlays);
   map.on('load', () => {
     S.mapReady = true;
@@ -169,16 +187,28 @@ function initMap() {
     fitInitial();
   });
   map.on('moveend', () => { renderMarkers(); updateWardLabels(); });
-  map.on('click', () => { if (osk && !$('#osk').hidden) { osk.hide(); $('#q').blur(); } });
-  map.on('click', 'w-fill', (e) => { if (e.originalEvent._mk) return; const f = e.features?.[0]; if (f && !S.route) openWard(f.properties.slug, { fly: false }); });
+  map.on('dragstart', () => { S.userMoved = true; });
+  map.on('click', onMapClick);
+  map.on('contextmenu', (e) => { if (!e.originalEvent._mk) pickAt(e.lngLat); });
 }
 // Các lớp riêng của Xanh24 — thêm lại mỗi khi đổi bản đồ nền
+function liteStyle() {
+  // Bỏ các lớp nặng của bản đồ nền (nhà 3D, địa hình, ảnh nền phụ) — giảm tải GPU trên kiosk
+  try {
+    (map.getStyle().layers || []).forEach(l => {
+      if (l.type === 'fill-extrusion' || l.type === 'hillshade' || (l.type === 'raster' && l.id !== 'base')) map.removeLayer(l.id);
+      else if (l.type === 'symbol' && /housenum|poi_r20|poi_transit|aeroway|water_way|waterway_line_label/.test(l.id)) map.setLayoutProperty(l.id, 'visibility', 'none');
+    });
+  } catch (e) { }
+}
 function addOverlays() {
+  if (LITE) liteStyle();
   const add = (id, def) => { if (!map.getSource(id)) map.addSource(id, def); };
   add('wards', { type: 'geojson', data: S.wardGeo, promoteId: 'slug' });
   add('mask', { type: 'geojson', data: emptyFC() });
   add('route', { type: 'geojson', data: S.route?.features ? { type: 'FeatureCollection', features: S.route.features } : emptyFC() });
   add('transit', { type: 'geojson', data: transitFC() });
+  add('here-acc', { type: 'geojson', data: emptyFC() });
   const L = (def) => { if (!map.getLayer(def.id)) map.addLayer(def); };
   const SEL = ['boolean', ['feature-state', 'sel'], false];
   L({ id: 'mask', type: 'fill', source: 'mask', paint: { 'fill-color': '#0B1B3F', 'fill-opacity': 0.42 } });
@@ -186,6 +216,8 @@ function addOverlays() {
   L({ id: 'w-line', type: 'line', source: 'wards', paint: { 'line-color': '#14346F', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 0.8, 15, 1.8], 'line-opacity': 0.6, 'line-dasharray': [3, 2] } });
   L({ id: 'w-sel-glow', type: 'line', source: 'wards', filter: ['==', ['get', 'slug'], S.selWard || ''], layout: { 'line-join': 'round' }, paint: { 'line-color': '#FFFFFF', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 7, 16, 12], 'line-opacity': 0.95, 'line-blur': 1 } });
   L({ id: 'w-sel', type: 'line', source: 'wards', filter: ['==', ['get', 'slug'], S.selWard || ''], layout: { 'line-join': 'round' }, paint: { 'line-color': '#0FA968', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 3.5, 16, 6.5] } });
+  L({ id: 'here-acc-fill', type: 'fill', source: 'here-acc', paint: { 'fill-color': '#2A62B8', 'fill-opacity': 0.12 } });
+  L({ id: 'here-acc-line', type: 'line', source: 'here-acc', paint: { 'line-color': '#2A62B8', 'line-opacity': 0.5, 'line-width': 1.5 } });
   L({ id: 'transit-case', type: 'line', source: 'transit', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#fff', 'line-width': 7, 'line-opacity': 0.9 } });
   L({ id: 'transit-line', type: 'line', source: 'transit', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ['get', 'color'], 'line-width': 4 } });
   // Lộ trình: viền trắng + nét đậm; chặng đi bộ dùng lớp chấm riêng (tránh dasharray theo dữ liệu)
@@ -194,6 +226,7 @@ function addOverlays() {
   L({ id: 'route-walk', type: 'line', source: 'route', filter: ['==', ['get', 'kind'], 'walk'], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ['coalesce', ['get', 'color'], '#2A62B8'], 'line-width': 7, 'line-dasharray': [0.1, 1.8] } });
   applyWardSel(false);
   applyOverlays();
+  updateAcc();
 }
 const emptyFC = () => ({ type: 'FeatureCollection', features: [] });
 function transitFC() {
@@ -238,6 +271,7 @@ function buildWardLabels() {
     const c = f.properties.center; if (!c) return;
     const el = document.createElement('div'); el.className = 'mk-ward'; el.textContent = f.properties.short;
     el.dataset.slug = f.properties.slug;
+    el.addEventListener('click', (e) => { e.stopPropagation(); e._mk = true; openWard(f.properties.slug); });
     wardLabels.push(new maplibregl.Marker({ element: el }).setLngLat(c).addTo(map));
   });
   updateWardLabels();
@@ -269,7 +303,76 @@ function setHere() {
   if (!S.origin) return;
   const el = document.createElement('div'); el.className = 'mk-here';
   el.innerHTML = `<div class="halo"></div><div class="dot"></div>${S.origin.kind === 'kiosk' || S.origin.kind === 'gps' ? `<div class="lbl">${esc(S.origin.kind === 'kiosk' ? t('youAreHere') : t('here'))}</div>` : ''}`;
+  el.classList.toggle('approx', !['kiosk', 'gps', 'shared'].includes(S.origin.kind));
   hereMarker = new maplibregl.Marker({ element: el }).setLngLat([S.origin.lng, S.origin.lat]).addTo(map);
+  updateAcc();
+}
+// ---------------------------------------------------------------- định vị thật (GPS / Wi-Fi của thiết bị)
+const IN_AREA = (p) => p && p.lng > 104.9 && p.lng < 106.4 && p.lat > 20.4 && p.lat < 21.5;
+function nativeLoc() { try { return window.X24Android?.location ? JSON.parse(window.X24Android.location()) : null; } catch (e) { return null; } }
+/* Thứ tự ưu tiên điểm xuất phát:
+   Kiosk: vị trí đặt máy ghim trong ứng dụng Android → GPS thiết bị (chính xác ≤ 50 m, chế độ "auto"/"gps")
+          → toạ độ quản trị khai báo → GPS kém chính xác (≤ 500 m).
+   Web/điện thoại: vị trí thật của người dùng (khi cho phép định vị và đang ở khu vực bản đồ). */
+function resolveOrigin() {
+  if (S.origin?.kind === 'shared') return S.origin;
+  const L = S.live, yh = t('youAreHere');
+  if (KIOSK) {
+    const nat = nativeLoc();
+    if (nat?.pinned && nat.lat) return { lat: nat.lat, lng: nat.lng, acc: 0, label: yh, kind: 'kiosk', src: 'app' };
+    const mode = S.device?.location_mode || 'auto';
+    // "auto": dùng GPS/Wi-Fi của thiết bị khi đủ chính xác, hoặc khi toạ độ khai báo lệch xa vị trí thật (VD: còn để toạ độ mẫu)
+    const far = L && S.device?.lat && hav(L, { lat: S.device.lat, lng: S.device.lng }) > Math.max(300, 3 * (L.acc || 0));
+    if (L && IN_AREA(L) && (mode === 'gps' || (mode === 'auto' && (L.acc <= 100 || far)))) return { lat: L.lat, lng: L.lng, acc: L.acc, label: yh, kind: 'kiosk', src: L.src };
+    if (S.device?.lat) return { lat: S.device.lat, lng: S.device.lng, acc: 0, label: yh, kind: 'kiosk', src: 'admin' };
+    if (L && IN_AREA(L)) return { lat: L.lat, lng: L.lng, acc: L.acc, label: yh, kind: 'kiosk', src: L.src };
+    return null;
+  }
+  if (L && IN_AREA(L)) return { lat: L.lat, lng: L.lng, acc: L.acc, label: t('here'), kind: 'gps', src: L.src };
+  return null;
+}
+function applyOrigin() {
+  const o = resolveOrigin(); if (!o) return false;
+  const prev = S.origin;
+  if (prev && prev.kind === o.kind && hav(prev, o) < 12) { prev.acc = o.acc; prev.src = o.src; updateAcc(); return false; }
+  S.origin = o; if (S.mapReady) setHere();
+  const v = S.stack[S.stack.length - 1]?.v;
+  if (['home', 'list', 'pick', 'ward', 'poi', 'transit'].includes(v)) render();
+  return true;
+}
+function circleFC(c, r) {
+  const pts = [], k = r / 6378137 * 180 / Math.PI;
+  for (let i = 0; i <= 48; i++) { const a = i / 48 * 2 * Math.PI; pts.push([c.lng + k * Math.cos(a) / Math.cos(c.lat * Math.PI / 180), c.lat + k * Math.sin(a)]); }
+  return { type: 'FeatureCollection', features: [{ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [pts] } }] };
+}
+function updateAcc() {
+  const src = map?.getSource?.('here-acc'); if (!src) return;
+  const o = S.origin; src.setData(o && o.acc > 15 && o.acc < 3000 ? circleFC(o, o.acc) : emptyFC());
+}
+let geoFirst = true;
+function onFix(lat, lng, acc, srcName) {
+  if (!isFinite(lat) || !isFinite(lng)) return;
+  S.live = { lat, lng, acc: Math.round(acc || 0), src: srcName, at: Date.now() };
+  const changed = applyOrigin();
+  if (changed && geoFirst && S.mapReady && !S.userMoved && S.stack.length <= 1 && !params.get('poi') && !params.get('pt')) {
+    map.flyTo({ center: [S.origin.lng, S.origin.lat], zoom: Math.max(map.getZoom(), 15), padding: mapPadding(), duration: 900 });
+  }
+  if (changed) geoFirst = false;
+}
+function startGeo() {
+  const fromNative = (l) => { if (l && l.lat) onFix(+l.lat, +l.lng, +l.acc || 0, l.src || 'android'); else applyOrigin(); };
+  window.X24NativeLocation = fromNative;
+  if (window.__x24NatLoc) fromNative(window.__x24NatLoc);
+  if (S.live) applyOrigin();
+  // Hỏi lại ứng dụng Android định kỳ (máy đứng yên có thể không phát sự kiện vị trí mới)
+  if (window.X24Android?.location) setInterval(() => { const l = nativeLoc(); if (l?.lat) fromNative(l); }, 15000);
+  if (!navigator.geolocation) return;
+  const opts = { enableHighAccuracy: true, maximumAge: 20000, timeout: 25000 };
+  try {
+    S.geoWatch = navigator.geolocation.watchPosition((p) => onFix(p.coords.latitude, p.coords.longitude, p.coords.accuracy, 'browser'), (err) => {
+      if (err.code === 1 && !KIOSK && !S.geoWarned) { S.geoWarned = true; toast(`${icon('locate', 18)} ${LANG === 'vi' ? 'Bật quyền truy cập vị trí để chỉ đường từ đúng chỗ bạn đứng' : 'Allow location access to get directions from where you are'}`, 6000); }
+    }, opts);
+  } catch (e) { }
 }
 function visiblePois() {
   let list = S.pois;
@@ -278,11 +381,13 @@ function visiblePois() {
 }
 function renderMarkers() {
   if (!map || !S.mapReady) return;
-  markers.forEach(m => m.remove()); markers = [];
+  const old = new Map(markers.map(m => [m._x24key, m])); markers = [];
+  const keep = (key, make) => { let m = old.get(key); if (m) old.delete(key); else { m = make(); m._x24key = key; } markers.push(m); };
   const list = S.route ? S.pois.filter(p => p.id === S.selPoi) : visiblePois();
   const z = map.getZoom();
   const bounds = map.getBounds();
-  const inView = list.filter(p => bounds.contains([p.lng, p.lat]) || p.id === S.selPoi);
+  let inView = list.filter(p => bounds.contains([p.lng, p.lat]) || p.id === S.selPoi);
+  if (LITE && inView.length > 150) inView = inView.filter(p => p.featured || p.id === S.selPoi).concat(inView.filter(p => !p.featured)).slice(0, 150);
   const cell = z < 13.5 ? 64 : 0;
   const groups = new Map();
   inView.forEach(p => {
@@ -293,18 +398,23 @@ function renderMarkers() {
   for (const g of groups.values()) {
     if (g.length === 1) {
       const p = g[0], c = S.catMap[p.category] || {};
-      const el = document.createElement('div');
-      el.className = 'mk' + (p.id === S.selPoi ? ' sel' : '') + (p.featured ? ' feat' : '');
-      el.innerHTML = PIN_SVG(c.color || '#2A62B8') + `<span class="mk-ic">${icon(c.icon || 'pin', 22)}</span>`;
-      el.addEventListener('click', (e) => { e.stopPropagation(); openPoi(p.id); });
-      markers.push(new maplibregl.Marker({ element: el, anchor: 'bottom' }).setLngLat([p.lng, p.lat]).addTo(map));
+      keep(`p${p.id}:${p.id === S.selPoi ? 1 : 0}`, () => {
+        const el = document.createElement('div');
+        el.className = 'mk' + (p.id === S.selPoi ? ' sel' : '') + (p.featured ? ' feat' : '');
+        el.innerHTML = PIN_SVG(c.color || '#2A62B8') + `<span class="mk-ic">${icon(c.icon || 'pin', 22)}</span>`;
+        el.addEventListener('click', (e) => { e.stopPropagation(); openPoi(p.id); });
+        return new maplibregl.Marker({ element: el, anchor: 'bottom' }).setLngLat([p.lng, p.lat]).addTo(map);
+      });
     } else {
       const lng = g.reduce((s, p) => s + p.lng, 0) / g.length, lat = g.reduce((s, p) => s + p.lat, 0) / g.length;
-      const el = document.createElement('div'); el.className = 'mk-cluster'; el.textContent = g.length;
-      el.addEventListener('click', (e) => { e.stopPropagation(); const b = new maplibregl.LngLatBounds(); g.forEach(p => b.extend([p.lng, p.lat])); map.fitBounds(b, { padding: mapPadding(), maxZoom: 16, duration: 600 }); });
-      markers.push(new maplibregl.Marker({ element: el }).setLngLat([lng, lat]).addTo(map));
+      keep(`c${g.map(p => p.id).sort((a, b) => a - b).join(',')}`, () => {
+        const el = document.createElement('div'); el.className = 'mk-cluster'; el.textContent = g.length;
+        el.addEventListener('click', (e) => { e.stopPropagation(); const b = new maplibregl.LngLatBounds(); g.forEach(p => b.extend([p.lng, p.lat])); map.fitBounds(b, { padding: mapPadding(), maxZoom: 16, duration: 600 }); });
+        return new maplibregl.Marker({ element: el }).setLngLat([lng, lat]).addTo(map);
+      });
     }
   }
+  old.forEach(m => m.remove());
 }
 
 // ---------------------------------------------------------------- navigation
@@ -329,6 +439,7 @@ function render() {
   body.scrollTop = 0;
   body.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon, +el.dataset.size || 22); });
   AFTER[v.v]?.(v);
+  syncPickMarker(v);
   if (MOBILE()) setSheet(v.v === 'home' ? 'half' : v.v === 'route' ? 'half' : 'half');
 }
 const backBtn = () => `<button class="back" data-act="back" aria-label="${t('back')}">${icon('back', 22)}</button>`;
@@ -354,7 +465,8 @@ const VIEWS = {
     const mods = S.boot.modules || [];
     return `<div class="pv">
       <div class="hello"><h2>${t('hello')}</h2><p>${t('helloSub')}</p>
-        ${S.origin ? `<span class="here-line">${icon('pin', 16)} ${esc(S.origin.kind === 'kiosk' ? `${t('youAreHere')} · ${S.device?.name || ''}` : (w ? w.name : S.origin.label))}</span>` : ''}</div>
+        ${S.origin ? `<span class="here-line">${icon(S.origin.kind === 'gps' ? 'locate' : 'pin', 16)} ${esc(S.origin.kind === 'kiosk' ? `${t('youAreHere')}${S.device?.name ? ' · ' + S.device.name : ''}${S.origin.acc > 15 ? ` · ±${fmtDist(S.origin.acc)}` : ''}` : S.origin.kind === 'gps' ? `${t('here')}${S.origin.acc ? ` · ±${fmtDist(S.origin.acc)}` : ''}` : S.origin.kind === 'shared' ? S.origin.label : (LANG === 'vi' ? `Chưa định vị — xuất phát tạm từ ${w ? w.name : S.origin.label}` : `Location off — starting from ${w ? w.name : S.origin.label}`))}</span>` : ''}</div>
+      <div class="pick-hint">${icon('touch', 20)}<span>${t('pickHint')}</span></div>
       <div class="quick">
         <button class="qa" data-act="near"><span class="qi">${icon('locate')}</span><span>${t('near')}<small>${t('nearSub')}</small></span></button>
         <button class="qa" data-act="transit"><span class="qi">${icon('metro')}</span><span>${t('transit')}<small>${t('transitSub')}</small></span></button>
@@ -386,12 +498,13 @@ const VIEWS = {
     const places = S.pois.map(p => [p, score(p)]).filter(x => x[1] > 0).sort((a, b) => b[1] - a[1] || (distTo(a[0]) - distTo(b[0]))).slice(0, 40).map(x => x[0]);
     const wards = S.wards.filter(w => toks.every(k => norm(w.name).includes(k))).slice(0, 8);
     const stops = S.transit.stops.filter(s => toks.every(k => norm(s.name).includes(k))).slice(0, 8);
-    const none = !places.length && !wards.length && !stops.length;
+    const none = !places.length && !wards.length && !stops.length && q.length < 3;
     return `<div class="pv"><div class="pv-head">${backBtn()}<div><h2 class="pv-title">“${esc(q)}”</h2><div class="pv-sub">${places.length + wards.length + stops.length} ${t('results')}</div></div></div>
       ${none ? `<div class="empty"><div class="ei">${icon('search', 30)}</div>${t('noResult')}</div>` : ''}
       ${wards.length ? `<div class="sr-group"><h4>${t('wards')}</h4><div class="list">${wards.map(w => `<button class="item" data-act="ward" data-slug="${w.slug}"><span class="th">${icon('map', 26)}</span><span class="ib"><b>${hl(w.name, q)}</b><span class="addr">${w.area_km2 ? w.area_km2.toString().replace('.', ',') + ' km² · ' : ''}${w.poi_count} ${t('places').toLowerCase()}</span></span></button>`).join('')}</div></div>` : ''}
       ${places.length ? `<div class="sr-group"><h4>${t('places')}</h4><div class="list">${places.map(p => poiItem(p, q)).join('')}</div></div>` : ''}
-      ${stops.length ? `<div class="sr-group"><h4>${t('stations')}</h4><div class="list">${stops.map(s => stopItem(s)).join('')}</div></div>` : ''}</div>`;
+      ${stops.length ? `<div class="sr-group"><h4>${t('stations')}</h4><div class="list">${stops.map(s => stopItem(s)).join('')}</div></div>` : ''}
+      ${q.length >= 3 ? `<div class="sr-group"><h4>${LANG === 'vi' ? 'Địa chỉ & địa điểm khác trên bản đồ' : 'Other addresses & places'}</h4><div class="list" id="geoRes">${geoResHTML(q)}</div></div>` : ''}</div>`;
   },
   poi(v) {
     const p = S.detail[v.id] || S.poiMap[v.id];
@@ -426,6 +539,29 @@ const VIEWS = {
       <div class="qrbox"><div class="qr">${qrSVG(`${baseUrl()}/?poi=${p.id}`, { size: 112 })}</div><div><b>${esc(p.name)}</b><small>${t('scanShareSub')}</small></div></div>
     </div>`;
   },
+  pick(v) {
+    const p = S.poiMap[v.id]; if (!p) return VIEWS.home();
+    const d = distTo(p); const w = p.ward_slug && S.wardMap[p.ward_slug]; const ride = S.settings.ride || {};
+    const near = S.pois.map(x => [x, hav(p, x)]).filter(x => x[1] < 800).sort((a, b) => a[1] - b[1]).slice(0, 4);
+    const kind = p.kind ? `<span class="tag">${esc(p.kind)}</span>` : '';
+    return `<div class="pv">
+      <div class="pv-head">${backBtn()}<div style="min-width:0"><h2 class="pv-title">${esc(p.name || t('pinned'))}</h2><div class="pv-sub">${p.address ? esc(p.address) : (p.loading ? `<span class="shimmer">${t('pinAddr')}</span>` : esc(t('pinned')))}</div></div></div>
+      <div class="d-meta" style="margin-top:0">${kind}${w ? `<button class="tag wardtag" data-act="pinward" data-slug="${esc(w.slug)}">${icon('map', 14)} ${esc(w.name)}</button>` : `<span class="tag">${t('outside')}</span>`}${d != null ? `<span class="tag dist">${icon('walk', 14)} ${fmtDist(d)}</span>` : ''}</div>
+      <div class="actions">
+        <button class="act primary" data-act="route" data-id="${p.id}"><span class="ai">${icon('route', 26)}</span>${t('directions')}</button>
+        <button class="act" data-act="share" data-id="${p.id}"><span class="ai">${icon('qr', 26)}</span>${t('share')}</button>
+        ${ride.grab ? `<button class="act grab" data-act="ride" data-p="grab" data-id="${p.id}"><span class="ai">${icon('moto', 26)}</span>${t('grab')}</button>` : ''}
+        ${ride.xanhsm ? `<button class="act xanh" data-act="ride" data-p="xanhsm" data-id="${p.id}"><span class="ai">${icon('taxi', 26)}</span>${t('xanhsm')}</button>` : ''}
+      </div>
+      <div class="rows">
+        ${p.address ? `<div class="row"><span class="ri">${icon('pin', 20)}</span><span>${esc(p.address)}</span></div>` : ''}
+        <div class="row"><span class="ri">${icon('compass', 20)}</span><span>${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}</span></div>
+      </div>
+      ${near.length ? `<div class="sec"><h3>${t('nearPlaces')}</h3></div><div class="list">${near.map(([x]) => poiItem(x)).join('')}</div>` : ''}
+      <div class="sec"><h3>${LANG === 'vi' ? 'Bến xe buýt & ga Metro gần điểm này' : 'Bus stops & metro near this point'}</h3></div><div id="pickT">${nearbyHTML(p.nearT)}</div>
+      <div class="note">${icon('touch', 16)} ${t('pickAgain')}</div>
+    </div>`;
+  },
   route(v) {
     const p = S.detail[v.id] || S.poiMap[v.id]; const r = S.route;
     const modes = [['foot', 'walk', t('walk')], ['bike', 'bike', t('bike')], ['driving', 'moto', t('drive')], ['transit', 'metro', t('bus')]];
@@ -437,10 +573,10 @@ const VIEWS = {
         body = `<div class="summary"><span class="big">${n}</span><span class="unit">${u}</span><span class="dist">${fmtDist(r.distance)}${r.source === 'estimate' ? ' · ' + t('estimate') : ''}</span></div>
           <div class="sec" style="margin-top:0"><h3>${t('steps')}</h3></div>
           <div class="steps">${r.steps.map((s, i) => `<button class="step" data-act="step" data-i="${i}"><span class="sn">${i + 1}</span><span>${esc(s.text)}${s.distance ? `<small>${fmtDist(s.distance)}</small>` : ''}</span></button>`).join('')}</div>
-          ${p.id > 0 ? `<div class="sec"><h3>${LANG === 'vi' ? 'Bến xe buýt & ga Metro gần bạn' : 'Nearest bus stops & metro'}</h3></div><div id="nearT">${nearbyHTML(S.nearT)}</div>` : ''}`;
+          ${!p.isStop ? `<div class="sec"><h3>${LANG === 'vi' ? 'Bến xe buýt & ga Metro gần bạn' : 'Nearest bus stops & metro'}</h3></div><div id="nearT">${nearbyHTML(S.nearT)}</div>` : ''}`;
       }
     }
-    const shareUrl = `${baseUrl()}/?poi=${p.id}&dir=${v.mode}&from=${S.origin.lat.toFixed(6)},${S.origin.lng.toFixed(6)}`;
+    const shareUrl = `${p.id > 0 ? `${baseUrl()}/?poi=${p.id}` : pointUrl(p)}&dir=${v.mode}&from=${S.origin.lat.toFixed(6)},${S.origin.lng.toFixed(6)}`;
     return `<div class="pv"><div class="pv-head">${backBtn()}<div style="min-width:0"><h2 class="pv-title">${t('directions')}</h2><div class="pv-sub">${esc(p.name)}</div></div></div>
       <div class="fromto"><div class="ft"><span class="dotA"></span><span><small>${t('from')}</small><b>${esc(S.origin.label)}</b></span></div>
       <div class="ft"><span class="dotB"></span><span><small>${t('to')}</small><b>${esc(p.name)}</b></span></div></div>
@@ -485,9 +621,105 @@ function stopItem(s, d) {
   const line = S.transit.lines.find(l => (s.lines || []).includes(l.code));
   return `<button class="item" data-act="stop" data-id="${s.id}"><span class="stop-badge" style="--c:${esc(line?.color || '#0E8FB0')}">${esc((s.lines || []).join(', ') || (s.kind === 'metro' ? 'M' : 'B'))}</span><span class="ib"><b>${esc(s.name)}</b><span class="addr">${esc(line?.name || '')}</span></span>${d != null ? `<span class="tag dist">${fmtDist(d)}</span>` : ''}</button>`;
 }
+// ---------------------------------------------------------------- tìm địa chỉ bất kỳ (OpenStreetMap: Photon / Nominatim)
+S.geoCache = {};
+let geoT = null;
+function geoResHTML(q) {
+  const items = S.geoCache[q];
+  if (!items) return `<div class="note">${icon('search', 16)} ${LANG === 'vi' ? 'Đang tìm địa chỉ…' : 'Searching addresses…'}</div>`;
+  if (!items.length) return `<div class="note">${LANG === 'vi' ? 'Không thấy địa chỉ phù hợp. Mẹo: chạm thẳng vào vị trí trên bản đồ để chỉ đường tới đó.' : 'No address found. Tip: tap the map to get directions there.'}</div>`;
+  return items.map((it, i) => { const d = S.origin ? hav(S.origin, it) : null; return `<button class="item" data-act="geo" data-i="${i}"><span class="th">${icon('pin', 24)}</span><span class="ib"><b>${hl(it.name, q)}</b><span class="meta">${it.ward_slug && S.wardMap[it.ward_slug] ? `<span class="tag">${esc(S.wardMap[it.ward_slug].short)}</span>` : ''}${d != null ? `<span class="tag dist">${fmtDist(d)}</span>` : ''}</span>${it.address ? `<span class="addr">${esc(it.address)}</span>` : ''}</span></button>`; }).join('');
+}
+function geoSearch(q) {
+  clearTimeout(geoT);
+  if (q.length < 3 || S.geoCache[q]) return;
+  geoT = setTimeout(async () => {
+    const o = S.origin || { lat: 21.0278, lng: 105.8342 };
+    try { const r = await api(`/api/public/geocode?q=${encodeURIComponent(q)}&lat=${o.lat.toFixed(4)}&lng=${o.lng.toFixed(4)}&lang=${LANG}`); S.geoCache[q] = r.items || []; }
+    catch (e) { S.geoCache[q] = []; }
+    const cur = S.stack[S.stack.length - 1]; const el = $('#geoRes');
+    if (el && cur?.v === 'search' && cur.q.trim() === q) el.innerHTML = geoResHTML(q);
+  }, 450);
+}
 const AFTER = {
+  search(v) { geoSearch(v.q.trim()); },
   poi(v) { const p = S.poiMap[v.id]; if (!p) return; S.selPoi = p.id; renderMarkers(); },
 };
+
+// ---------------------------------------------------------------- chọn điểm bất kỳ trên bản đồ
+const OWN_SRC = ['wards', 'mask', 'route', 'transit', 'here-acc'];
+const POI_KIND_VI = { restaurant: 'Nhà hàng', cafe: 'Quán cà phê', fast_food: 'Đồ ăn nhanh', bar: 'Quán bar', school: 'Trường học', college: 'Trường cao đẳng', university: 'Trường đại học', kindergarten: 'Trường mầm non', hospital: 'Bệnh viện', clinic: 'Phòng khám', pharmacy: 'Nhà thuốc', doctors: 'Phòng khám', bank: 'Ngân hàng', atm: 'ATM', fuel: 'Trạm xăng', parking: 'Bãi đỗ xe', place_of_worship: 'Cơ sở tôn giáo', temple: 'Đền, chùa', museum: 'Bảo tàng', theatre: 'Nhà hát', cinema: 'Rạp chiếu phim', hotel: 'Khách sạn', attraction: 'Điểm tham quan', park: 'Công viên', marketplace: 'Chợ', supermarket: 'Siêu thị', convenience: 'Cửa hàng tiện lợi', shop: 'Cửa hàng', police: 'Công an', post: 'Bưu điện', post_office: 'Bưu điện', townhall: 'Cơ quan hành chính', library: 'Thư viện', stadium: 'Sân vận động', sports: 'Thể thao', bus: 'Điểm dừng xe buýt', railway: 'Nhà ga', monument: 'Tượng đài', memorial: 'Đài tưởng niệm', lodging: 'Nơi lưu trú', grocery: 'Tạp hoá', clothing_store: 'Cửa hàng quần áo', office: 'Văn phòng', embassy: 'Đại sứ quán' };
+function wardAt(lng, lat) {
+  const inRing = (ring) => { let c = false; for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) { const [xi, yi] = ring[i], [xj, yj] = ring[j]; if ((yi > lat) !== (yj > lat) && lng < (xj - xi) * (lat - yi) / (yj - yi) + xi) c = !c; } return c; };
+  const inPoly = (poly) => inRing(poly[0]) && !poly.slice(1).some(inRing);
+  const f = (S.wardGeo?.features || []).find(f => { const g = f.geometry; return g && (g.type === 'Polygon' ? inPoly(g.coordinates) : g.coordinates.some(inPoly)); });
+  return f?.properties.slug || null;
+}
+const pointUrl = (p) => `${baseUrl()}/?pt=${p.lat.toFixed(6)},${p.lng.toFixed(6)}&name=${encodeURIComponent(p.name || '')}`;
+function onMapClick(e) {
+  if (e.originalEvent?._mk) return;
+  if (osk && !$('#osk').hidden) { osk.hide(); $('#q').blur(); return; } // chạm bản đồ khi đang gõ: chỉ đóng bàn phím ảo
+  // Ưu tiên điểm có tên trên bản đồ nền (cửa hàng, trường học, bệnh viện… của OpenStreetMap)
+  const pad = MOBILE() ? 14 : 10, pt = e.point;
+  let feat = null;
+  try {
+    feat = map.queryRenderedFeatures([[pt.x - pad, pt.y - pad], [pt.x + pad, pt.y + pad]])
+      .find(f => !OWN_SRC.includes(f.source) && f.layer.type === 'symbol' && (f.properties['name:vi'] || f.properties.name) && f.geometry.type === 'Point' && /poi|aerodrome|station/.test(f.sourceLayer || f.layer.id));
+  } catch { }
+  if (feat) {
+    const pr = feat.properties, [lng, lat] = feat.geometry.coordinates;
+    const k = pr.subclass || pr.class || '';
+    pickAt({ lng, lat }, { name: pr['name:vi'] || pr.name, kind: LANG === 'vi' ? (POI_KIND_VI[k] || POI_KIND_VI[pr.class] || '') : String(k).replace(/_/g, ' ') });
+  } else pickAt(e.lngLat);
+}
+function roadNear(lngLat) {
+  try {
+    const pt = map.project(lngLat);
+    const f = map.queryRenderedFeatures([[pt.x - 40, pt.y - 40], [pt.x + 40, pt.y + 40]]).find(f => !OWN_SRC.includes(f.source) && /transportation_name|road/.test(f.sourceLayer || f.layer.id) && (f.properties['name:vi'] || f.properties.name));
+    return f ? (f.properties['name:vi'] || f.properties.name) : '';
+  } catch { return ''; }
+}
+let pickSeq = 0, pickMarker = null;
+function pickAt(ll, extra = {}) {
+  const lat = +(ll.lat), lng = +(ll.lng);
+  const id = -(900000000 + (++pickSeq));
+  const road = roadNear({ lng, lat });
+  const p = { id, picked: true, lat, lng, name: extra.name || '', kind: extra.kind || '', address: extra.address || road, category: '_pin', images: [], ward_slug: wardAt(lng, lat), loading: S.settings.geocode?.enabled !== false };
+  if (!p.name) p.name = road ? `${LANG === 'vi' ? 'Gần' : 'Near'} ${road}` : t('pinned');
+  S.poiMap[id] = p; S.detail[id] = p; S.lastPick = { lat, lng };
+  const cur = S.stack[S.stack.length - 1];
+  if (cur?.v === 'pick') S.stack.pop();
+  clearRoute(); S.selPoi = null;
+  go({ v: 'pick', id });
+  renderMarkers();
+  if (!map.getBounds().contains([lng, lat])) map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 16), padding: mapPadding(), duration: 700 });
+  track('pin_drop', { ward: p.ward_slug, data: { lat: +lat.toFixed(5), lng: +lng.toFixed(5), named: !!extra.name } });
+  const refresh = () => { const now = S.stack[S.stack.length - 1]; if (now?.v === 'pick' && now.id === id) render(); };
+  if (p.loading) {
+    api(`/api/public/reverse?lat=${lat.toFixed(6)}&lng=${lng.toFixed(6)}&lang=${LANG}`).then(r => {
+      p.loading = false;
+      if (r.address && !extra.address) p.address = r.address;
+      if (!extra.name && r.name) p.name = r.name;
+      else if (!extra.name && !road && r.road) p.name = `${LANG === 'vi' ? 'Gần' : 'Near'} ${r.road}`;
+      if (r.ward_slug) p.ward_slug = r.ward_slug;
+      refresh();
+    }).catch(() => { p.loading = false; refresh(); });
+  }
+  nearestTransit(p).then(nt => { p.nearT = nt; const el = $('#pickT'); if (el && S.stack[S.stack.length - 1]?.id === id) el.innerHTML = nearbyHTML(nt); }).catch(() => { });
+  return id;
+}
+function syncPickMarker(v) {
+  const p = v && (v.v === 'pick' || v.v === 'route') ? S.poiMap[v.id] : null;
+  if (!p?.picked) { pickMarker?.remove(); pickMarker = null; return; }
+  if (!pickMarker) {
+    const el = document.createElement('div'); el.className = 'mk-pick';
+    el.innerHTML = `<span class="pulse"></span><svg viewBox="0 0 40 48" width="44" height="53"><path d="M20 47s15-13.4 15-26.5C35 11.4 28.3 4 20 4S5 11.4 5 20.5C5 33.6 20 47 20 47z" fill="#0FA968" stroke="#fff" stroke-width="3"/><circle cx="20" cy="20" r="6" fill="#fff"/></svg>`;
+    el.addEventListener('click', (e) => { e.stopPropagation(); e._mk = true; });
+    pickMarker = new maplibregl.Marker({ element: el, anchor: 'bottom' });
+  }
+  pickMarker.setLngLat([p.lng, p.lat]).addTo(map);
+  pickMarker.getElement().style.display = v.v === 'route' ? 'none' : '';
+}
 
 // ---------------------------------------------------------------- actions
 async function openPoi(id, opts = {}) {
@@ -519,7 +751,7 @@ async function startRoute(id, mode = 'foot') {
   track('route_request', { poi_id: id, mode });
   endMarker?.remove(); planMarkers.forEach(m => m.remove()); planMarkers = [];
   map.getSource('route')?.setData(emptyFC());
-  if (mode !== 'transit' && id > 0) {
+  if (mode !== 'transit' && !p.isStop) {
     const ok = `${S.origin.lat},${S.origin.lng}`;
     if (S.nearTKey !== ok) { S.nearTKey = ok; S.nearT = null; nearestTransit(S.origin).then(nt => { if (S.nearTKey !== ok) return; S.nearT = nt; const el = $('#nearT'); if (el) { el.innerHTML = nearbyHTML(nt); } }); }
   }
@@ -685,7 +917,7 @@ function busShape(rel, ways, sa, sb, stopsPath) {
 let planMarkers = [];
 function routeToStop(st) {
   const id = -Math.abs(Number(String(st.id).replace(/\D/g, '').slice(-9)) || Date.now() % 1e9);
-  S.poiMap[id] = { id, name: st.name, lat: st.lat, lng: st.lng, category: 'giao-thong', address: (st.lines || []).length ? `${t('lines')}: ${st.lines.join(', ')}` : '', images: [] };
+  S.poiMap[id] = { id, isStop: true, name: st.name, lat: st.lat, lng: st.lng, category: 'giao-thong', address: (st.lines || []).length ? `${t('lines')}: ${st.lines.join(', ')}` : '', images: [] };
   S.detail[id] = S.poiMap[id];
   startRoute(id, 'foot');
 }
@@ -745,7 +977,7 @@ function rideModal(provider, id) {
 function shareModal(id) {
   const p = S.detail[id] || S.poiMap[id];
   modal(`<div class="mh"><h3>${t('scanShare')}</h3><button class="round" data-close>${icon('close')}</button></div>
-  <div class="mb"><div class="ride-qr"><div class="qr">${qrSVG(`${baseUrl()}/?poi=${id}`, { size: 220 })}</div><div><b style="font-size:1.1rem;color:var(--navy)">${esc(p.name)}</b><p class="note">${t('scanShareSub')}</p></div></div></div>`);
+  <div class="mb"><div class="ride-qr"><div class="qr">${qrSVG(id > 0 ? `${baseUrl()}/?poi=${id}` : pointUrl(p), { size: 220 })}</div><div><b style="font-size:1.1rem;color:var(--navy)">${esc(p.name)}</b><p class="note">${t('scanShareSub')}</p></div></div></div>`);
 }
 let vrInstance = null;
 async function openVR(id) {
@@ -825,6 +1057,8 @@ function initUI() {
     else if (a === 'module') openModule(b.dataset.key);
     else if (a === 'transit') { go({ v: 'transit' }); S.showMetro = true; applyOverlays(); const bb = new maplibregl.LngLatBounds(); S.transit.stops.forEach(s => bb.extend([s.lng, s.lat])); if (!bb.isEmpty()) map.fitBounds(bb, { padding: mapPadding(), duration: 700 }); }
     else if (a === 'wards') go({ v: 'wards' });
+    else if (a === 'pinward') openWard(b.dataset.slug);
+    else if (a === 'geo') { const cur = S.stack[S.stack.length - 1]; const it = (S.geoCache[cur?.q?.trim()] || [])[+b.dataset.i]; if (it) { const id = pickAt({ lat: it.lat, lng: it.lng }, { name: it.name, address: it.address, kind: it.kind }); map.flyTo({ center: [it.lng, it.lat], zoom: Math.max(map.getZoom(), 16), padding: mapPadding(), duration: 700 }); track('geo_search_pick', { data: { q: cur.q.slice(0, 60) } }); } }
     else if (a === 'ward') openWard(b.dataset.slug);
     else if (a === 'scan') scanModal(b.dataset.slug);
     else if (a === 'stop') { const s = S.transit.stops.find(x => x.id === id); if (s) map.flyTo({ center: [s.lng, s.lat], zoom: 16, padding: mapPadding() }); }
@@ -901,10 +1135,11 @@ function toggleLayers() {
   };
 }
 function locateMe() {
-  if (KIOSK || !navigator.geolocation) { map.flyTo({ center: [S.origin.lng, S.origin.lat], zoom: 16, padding: mapPadding() }); return; }
+  if (KIOSK || !navigator.geolocation) { applyOrigin(); map.flyTo({ center: [S.origin.lng, S.origin.lat], zoom: 16, padding: mapPadding() }); return; }
   navigator.geolocation.getCurrentPosition((pos) => {
-    S.origin = { lat: pos.coords.latitude, lng: pos.coords.longitude, label: t('here'), kind: 'gps' };
-    setHere(); map.flyTo({ center: [S.origin.lng, S.origin.lat], zoom: 16, padding: mapPadding() }); render();
+    onFix(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy, 'browser');
+    if (!IN_AREA(S.live)) toast(LANG === 'vi' ? 'Bạn đang ở ngoài khu vực bản đồ Hà Nội — dùng điểm xuất phát mặc định' : 'You are outside the map area');
+    map.flyTo({ center: [S.origin.lng, S.origin.lat], zoom: 16, padding: mapPadding() });
   }, () => { toast(LANG === 'vi' ? 'Không lấy được vị trí — hãy cho phép truy cập vị trí' : 'Location unavailable'); map.flyTo({ center: [S.origin.lng, S.origin.lat], zoom: 15 }); }, { enableHighAccuracy: true, timeout: 8000 });
 }
 function resetApp() {
@@ -948,8 +1183,10 @@ function initKiosk() {
   // heartbeat + tự nạp lại cấu hình
   const hb = async () => {
     try {
-      const r = await api('/api/public/heartbeat', { method: 'POST', body: JSON.stringify({ device: DEVICE, screen: `${screen.width}x${screen.height}` }) });
+      const r = await api('/api/public/heartbeat', { method: 'POST', body: JSON.stringify({ device: DEVICE, screen: `${screen.width}x${screen.height}`, gps: S.live ? { lat: S.live.lat, lng: S.live.lng, acc: S.live.acc, src: S.live.src } : null }) });
       if (S.cfgVer == null) S.cfgVer = r.config_version; else if (r.config_version !== S.cfgVer && Idle.active) location.reload();
+      // Dữ liệu mới (địa điểm, quảng cáo, ranh giới…) được duyệt trên máy chủ → tự nạp lại khi kiosk đang ở chế độ chờ
+      if (r.data_version != null) { if (S.dataVer == null) S.dataVer = S.boot.data_version ?? r.data_version; if (r.data_version !== S.dataVer) { S.dataPending = true; if (Idle.active) location.reload(); } }
     } catch { }
   };
   hb(); setInterval(hb, 60000);
@@ -988,6 +1225,7 @@ function playSlide(i) {
   if (ad?.id) track('ad_impression', { ad: ad.id });
 }
 function enterIdle(reset = true) {
+  if (S.dataPending && reset) { flushEvents(); location.reload(); return; }
   if (reset) resetApp();
   hideToast('idle'); Idle.active = true; Idle.warned = false;
   flushEvents();
@@ -1027,11 +1265,34 @@ function deviceMenu() {
     <div class="searchbox" style="margin:6px 0 14px;max-width:none"><input id="devCode" value="${esc(DEVICE)}" style="height:48px"></div>
     <div class="btn-row"><button class="btn pri" id="devSave">${icon('check', 20)} Lưu & tải lại</button><button class="btn sec" id="devReload">${icon('refresh', 20)} Tải lại</button></div>
     <div class="btn-row"><button class="btn sec" id="devWeb">${icon('logout', 20)} Thoát chế độ kiosk</button><button class="btn sec" id="devAdmin">${icon('settings', 20)} Trang quản trị</button></div></div>`);
+  { // chẩn đoán vị trí "Bạn đang ở đây"
+    const o = S.origin || {}, L = S.live, src = { app: 'ghim trong ứng dụng Android', admin: 'toạ độ khai báo ở trang quản trị', browser: 'định vị của trình duyệt/WebView', gps: 'GPS', network: 'Wi-Fi/mạng di động', passive: 'Android', fused: 'Android', pinned: 'ghim trong ứng dụng Android' };
+    const p = document.createElement('p'); p.className = 'note';
+    p.innerHTML = `<b>Vị trí đang dùng:</b> ${o.lat ? `${o.lat.toFixed(6)}, ${o.lng.toFixed(6)}` : '—'} · nguồn: ${esc(src[o.src] || o.src || o.kind || '—')}${o.acc ? ` · ±${Math.round(o.acc)} m` : ''}<br><b>Tín hiệu định vị của thiết bị:</b> ${L ? `${L.lat.toFixed(6)}, ${L.lng.toFixed(6)} · ±${Math.round(L.acc)} m · ${esc(src[L.src] || L.src)} · ${Math.round((Date.now() - L.at) / 1000)} giây trước` : 'chưa nhận được — kiểm tra đã bật Vị trí và cấp quyền cho ứng dụng'}`;
+    $('#modalCard .mb').insertBefore(p, $('#modalCard .mb label'));
+  }
   $('#devSave').onclick = () => { const v = $('#devCode').value.trim(); if (v) store.set('x24_device', v); else store.del('x24_device'); location.href = '/' + (v ? `?device=${encodeURIComponent(v)}` : ''); };
   $('#devReload').onclick = () => location.reload();
   $('#devWeb').onclick = () => { location.href = '/?mode=web'; };
   $('#devAdmin').onclick = () => { location.href = '/admin'; };
+  if (window.X24Android) { // đang chạy trong ứng dụng kiosk Android
+    let info = {}; try { info = JSON.parse(window.X24Android.info()); } catch (e) { }
+    const row = document.createElement('div'); row.className = 'btn-row';
+    row.innerHTML = `<button class="btn sec" id="devApp">${icon('device', 20)} Cài đặt ứng dụng Android</button>`;
+    $('#modalCard .mb').appendChild(row);
+    $('#modalCard .mb .note').textContent += ` · Ứng dụng kiosk ${info.version || ''} (${info.model || ''})`;
+    $('#devApp').onclick = () => { closeModal(); window.X24Android.openSettings(); };
+    if (window.X24Android.setPinned) {
+      const r2 = document.createElement('div'); r2.className = 'btn-row';
+      r2.innerHTML = `${S.lastPick ? `<button class="btn pri" id="devPin">${icon('pin', 20)} Ghim điểm vừa chạm trên bản đồ làm vị trí máy (${S.lastPick.lat.toFixed(5)}, ${S.lastPick.lng.toFixed(5)})</button>` : `<p class="note">Để ghim vị trí máy: đóng menu, chạm vào đúng chỗ đặt màn hình trên bản đồ, rồi mở lại menu này.</p>`}<button class="btn sec" id="devUnpin">${icon('refresh', 20)} Bỏ ghim (tự động)</button>`;
+      $('#modalCard .mb').appendChild(r2);
+      $('#devPin') && ($('#devPin').onclick = () => { window.X24Android.setPinned(S.lastPick.lat, S.lastPick.lng); closeModal(); setTimeout(() => { applyOrigin(); map.flyTo({ center: [S.origin.lng, S.origin.lat], zoom: 16 }); }, 400); });
+      $('#devUnpin').onclick = () => { window.X24Android.clearPinned(); closeModal(); };
+    }
+  }
 }
+// Ứng dụng kiosk Android báo có dữ liệu mới → nạp lại khi về chế độ chờ
+window.X24DataChanged = () => { S.dataPending = true; if (Idle.active) { flushEvents(); location.reload(); } };
 
 boot().catch((e) => {
   console.error(e);

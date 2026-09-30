@@ -13,6 +13,8 @@ Tất cả trả JSON UTF-8. Lỗi: `{ "error": "..." }` với mã HTTP 4xx/5xx.
 | GET | `/api/public/transit` | Tuyến & trạm xe buýt/metro |
 | GET | `/api/public/ads?device=CODE` | Danh sách quảng cáo đang phát cho thiết bị |
 | GET | `/api/public/route?from=lng,lat&to=lng,lat&mode=foot\|bike\|driving&lang=vi` | Chỉ đường (proxy OSRM, dự phòng ước lượng) |
+| GET | `/api/public/reverse?lat=&lng=&lang=vi` | Thông tin điểm bất kỳ: phường (ranh giới nội bộ) + địa chỉ (Nominatim/OSM, có đệm) |
+| GET | `/api/public/version` | `data_version`, `config_version`, `kiosk_app` — kiosk/ứng dụng Android dùng để tự cập nhật |
 | POST | `/api/public/events` | Thống kê: `{device, session, events:[{type, poi_id, ward, data, at}]}` |
 | POST | `/api/public/heartbeat` | Kiosk báo trực tuyến: `{device, screen}` |
 | POST | `/api/public/kiosk/unlock` | Kiểm tra PIN menu thiết bị |

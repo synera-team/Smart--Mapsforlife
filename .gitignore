@@ -2,3 +2,7 @@ data/
 __pycache__/
 *.pyc
 .env
+
+# khoá ký APK — không đưa lên kho công khai
+android/keystore/
+android/build/
