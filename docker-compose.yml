@@ -1,0 +1,15 @@
+services:
+  xanh24-maps:
+    build: .
+    image: xanh24/maps-for-life:1.0.0
+    restart: unless-stopped
+    ports:
+      - "8024:8024"
+    environment:
+      # Đặt mật khẩu S0 ban đầu (chỉ dùng ở lần khởi tạo đầu tiên)
+      XANH24_ADMIN_PASSWORD: "DoiMatKhau@2026"
+      # Khoá ký phiên đăng nhập — thay bằng chuỗi ngẫu nhiên dài
+      XANH24_SECRET: "thay-bang-chuoi-ngau-nhien-64-ky-tu"
+      WORKERS: "4"
+    volumes:
+      - ./data:/data

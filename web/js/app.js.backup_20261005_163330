@@ -1,0 +1,1333 @@
+// =====================================================================
+// Xanh24 — Maps for Life · ứng dụng bản đồ công khai
+// Chế độ: kiosk (màn hình LCD Android tương tác) · mobile · desktop
+// =====================================================================
+import { icon } from './icons.js';
+import { qrSVG } from './qr.js';
+import { VRViewer, embedUrl } from './vr.js';
+import { OSK } from './osk.js';
+
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch { } }, del(k) { try { localStorage.removeItem(k); } catch { } } };
+const params = new URLSearchParams(location.search);
+// Ứng dụng Android có thể gửi vị trí trước khi bản đồ tải xong → giữ lại bản mới nhất
+window.__x24NatLoc = null;
+window.X24NativeLocation = (l) => { window.__x24NatLoc = l; };
+if (params.get('device')) store.set('x24_device', params.get('device'));
+if (params.get('mode') === 'web') { store.del('x24_device'); store.del('x24_kiosk'); }
+if (params.get('mode') === 'kiosk') store.set('x24_kiosk', '1');
+const DEVICE = params.get('device') || store.get('x24_device') || '';
+const KIOSK = params.get('mode') !== 'web' && (params.get('mode') === 'kiosk' || !!DEVICE || store.get('x24_kiosk') === '1');
+const MOBILE = () => window.innerWidth < 700;
+const LITE = params.get('lite') === '1' || (params.get('lite') !== '0' && (store.get('x24_lite') === '1' || !!(window.X24Android) || KIOSK));
+
+// ---------------------------------------------------------------- i18n
+const I18N = {
+  vi: {
+    pickHint: 'Chạm vào vị trí bất kỳ trên bản đồ để xem thông tin và chỉ đường tới đó', pinned: 'Điểm đã chọn', pinAddr: 'Đang tra địa chỉ…', nearPlaces: 'Địa điểm gần điểm này', viewWard: 'Xem phường', outside: 'Ngoài 51 phường/xã trên nền tảng', pickAgain: 'Chạm bản đồ để chọn điểm khác', kicker: 'Bản đồ số', hello: 'Xin chào!', helloSub: 'Bạn muốn đi đâu hôm nay?', youAreHere: 'Bạn đang ở đây', explore: 'Khám phá theo nhóm',
+    featured: 'Địa điểm nổi bật', utilities: 'Tiện ích khác', seeAll: 'Xem tất cả', quick: 'Truy cập nhanh', wards: 'Phường / Xã', wardsSub: 'Ranh giới hành chính mới',
+    transit: 'Xe buýt & Metro', transitSub: 'Tuyến, nhà ga gần đây', near: 'Gần bạn', nearSub: 'Trong bán kính 1 km', search: 'Tìm địa điểm, cơ quan, phường…',
+    inWard: 'Trong phường', allCity: 'Toàn thành phố', results: 'kết quả', noResult: 'Không tìm thấy kết quả phù hợp', places: 'Địa điểm', stations: 'Nhà ga / Trạm dừng',
+    directions: 'Chỉ đường', share: 'Gửi về máy', vr: 'Tham quan 360°', grab: 'Gọi Grab', xanhsm: 'Gọi Xanh SM', address: 'Địa chỉ', hours: 'Giờ mở cửa', phone: 'Điện thoại',
+    website: 'Website', nearbyStops: 'Giao thông công cộng gần đây', walk: 'Đi bộ', bike: 'Xe đạp', drive: 'Xe máy · Ô tô', bus: 'Buýt · Metro', from: 'Từ', to: 'Đến',
+    min: 'phút', hour: 'giờ', steps: 'Hướng dẫn chi tiết', takeRoute: 'Mang lộ trình theo', takeRouteSub: 'Quét mã QR bằng camera điện thoại để mở lộ trình và tiếp tục dẫn đường.',
+    scanShare: 'Quét để xem trên điện thoại', scanShareSub: 'Mở thông tin địa điểm trên điện thoại của bạn — không cần cài ứng dụng.',
+    rideTitle: 'Đặt xe tới', rideStep1: 'Mở camera điện thoại và quét mã QR', rideStep2: 'Trang đặt xe mở ra với điểm đến đã điền sẵn', rideStep3: 'Xác nhận điểm đón và đặt xe trong ứng dụng', rideStep2x: 'Bấm “Mở ứng dụng” — địa chỉ điểm đến được sao chép sẵn, dán vào ô Điểm đến',
+    close: 'Đóng', back: 'Quay lại', idleCta: 'Chạm để mở Bản đồ', idleSub: 'Tìm địa điểm · Chỉ đường · Xe buýt & Metro · Gọi xe', idleWarn: 'Màn hình sẽ trở về chế độ chờ sau', sec: 'giây',
+    stay: 'Tiếp tục sử dụng', area: 'Diện tích', poiCount: 'Địa điểm', originalMap: 'Bản đồ phương án gốc', hq: 'Trụ sở UBND', viewOnMap: 'Xem trên bản đồ', verify: 'Dữ liệu tham khảo, đang được cán bộ xác minh',
+    metroPlan: 'Phương án đi Metro', walkTo: 'Đi bộ tới', ride: 'Đi tàu', stopsCount: 'ga', getOff: 'Xuống tại', noPlan: 'Chưa tìm được phương án Metro trực tiếp trong bán kính đi bộ. Xem thêm tuyến xe buýt trên điện thoại:',
+    moreBus: 'Tra cứu thêm xe buýt', estimate: 'Ước lượng', layers: 'Lớp bản đồ', baseMap: 'Bản đồ nền', overlays: 'Hiển thị', showWards: 'Ranh giới phường', showMetro: 'Tuyến & ga Metro',
+    loading: 'Đang tải…', here: 'Vị trí hiện tại', start: 'Điểm xuất phát', nearest: 'gần nhất', openApp: 'Mở trên điện thoại', stationNear: 'Ga gần bạn', lines: 'Các tuyến', km: 'km',
+    wardInfo: 'Thông tin phường', wardList: 'Danh sách phường / xã', searchWard: 'Tìm phường…', modules: 'Tiện ích',
+  },
+  en: {
+    pickHint: 'Tap anywhere on the map to see details and get directions', pinned: 'Selected point', pinAddr: 'Looking up address…', nearPlaces: 'Places near this point', viewWard: 'View ward', outside: 'Outside the covered wards', pickAgain: 'Tap the map to pick another point', kicker: 'Digital map', hello: 'Hello!', helloSub: 'Where would you like to go today?', youAreHere: 'You are here', explore: 'Explore by category',
+    featured: 'Featured places', utilities: 'More services', seeAll: 'See all', quick: 'Quick access', wards: 'Wards / Communes', wardsSub: 'New administrative boundaries',
+    transit: 'Bus & Metro', transitSub: 'Lines and nearby stations', near: 'Near you', nearSub: 'Within 1 km', search: 'Search places, offices, wards…',
+    inWard: 'In this ward', allCity: 'Whole city', results: 'results', noResult: 'No matching results', places: 'Places', stations: 'Stations / Stops',
+    directions: 'Directions', share: 'Send to phone', vr: '360° tour', grab: 'Book Grab', xanhsm: 'Book Xanh SM', address: 'Address', hours: 'Opening hours', phone: 'Phone',
+    website: 'Website', nearbyStops: 'Nearby public transport', walk: 'Walk', bike: 'Bicycle', drive: 'Motorbike · Car', bus: 'Bus · Metro', from: 'From', to: 'To',
+    min: 'min', hour: 'h', steps: 'Step-by-step', takeRoute: 'Take this route with you', takeRouteSub: 'Scan the QR code with your phone camera to continue navigation.',
+    scanShare: 'Scan to open on your phone', scanShareSub: 'Open this place on your phone — no app needed.',
+    rideTitle: 'Book a ride to', rideStep1: 'Open your phone camera and scan the QR code', rideStep2: 'The booking page opens with the destination filled in', rideStep3: 'Confirm pick-up point and book in the app', rideStep2x: 'Tap “Open app” — the destination address is copied, paste it as your destination',
+    close: 'Close', back: 'Back', idleCta: 'Touch to open the Map', idleSub: 'Find places · Directions · Bus & Metro · Book a ride', idleWarn: 'Returning to standby in', sec: 's',
+    stay: 'Keep using', area: 'Area', poiCount: 'Places', originalMap: 'Official boundary map', hq: 'People\'s Committee', viewOnMap: 'View on map', verify: 'Reference data, pending verification',
+    metroPlan: 'Metro option', walkTo: 'Walk to', ride: 'Ride', stopsCount: 'stops', getOff: 'Get off at', noPlan: 'No direct metro option within walking distance. See bus options on your phone:',
+    moreBus: 'More bus options', estimate: 'Estimate', layers: 'Map layers', baseMap: 'Base map', overlays: 'Show', showWards: 'Ward boundaries', showMetro: 'Metro lines & stations',
+    loading: 'Loading…', here: 'Current location', start: 'Start point', nearest: 'nearest', openApp: 'Open on phone', stationNear: 'Stations near you', lines: 'Lines', km: 'km',
+    wardInfo: 'Ward information', wardList: 'Wards & communes', searchWard: 'Search ward…', modules: 'Services',
+  },
+};
+let LANG = store.get('x24_lang') || 'vi';
+const t = (k) => (I18N[LANG] && I18N[LANG][k]) || I18N.vi[k] || k;
+
+// ---------------------------------------------------------------- utils
+const norm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[đĐ]/g, 'd').toLowerCase();
+function hav(a, b) { const R = 6371000, r = Math.PI / 180, dl = (b.lat - a.lat) * r, dn = (b.lng - a.lng) * r; const x = Math.sin(dl / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dn / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(x)); }
+const fmtDist = (m) => m < 1000 ? `${Math.round(m / 10) * 10} m` : `${(m / 1000).toFixed(m < 10000 ? 1 : 0).replace('.', LANG === 'vi' ? ',' : '.')} km`;
+function fmtDur(s) { const m = Math.max(1, Math.round(s / 60)); if (m < 60) return [m, t('min')]; const h = Math.floor(m / 60); return [`${h} ${t('hour')} ${m % 60}`, t('min')]; }
+const api = async (url, opt = {}) => { const r = await fetch(url, { ...opt, headers: { 'Content-Type': 'application/json', ...(opt.headers || {}) } }); if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText); return r.json(); };
+const hl = (text, q) => {
+  text = String(text || ''); if (!q) return esc(text);
+  const n = norm(text); const marks = new Array(text.length).fill(false);
+  norm(q).split(/\s+/).filter(Boolean).forEach(k => { let i = n.indexOf(k); while (i >= 0) { for (let j = i; j < i + k.length; j++) marks[j] = true; i = n.indexOf(k, i + k.length); } });
+  let out = '', on = false;
+  for (let i = 0; i < text.length; i++) { if (marks[i] !== on) { out += marks[i] ? '<mark>' : '</mark>'; on = marks[i]; } out += esc(text[i]); }
+  return out + (on ? '</mark>' : '');
+};
+function toast(html, ms = 3500, id = 'gen') { const el = $('#toast'); el.innerHTML = html; el.hidden = false; el.dataset.id = id; clearTimeout(toast._t); if (ms) toast._t = setTimeout(() => { el.hidden = true; }, ms); }
+function hideToast(id) { const el = $('#toast'); if (!id || el.dataset.id === id) el.hidden = true; }
+document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon, 24); });
+
+// ---------------------------------------------------------------- state
+const S = {
+  boot: null, settings: {}, device: null, cats: [], catMap: {}, wards: [], wardMap: {}, wardGeo: null, pois: [], poiMap: {}, detail: {},
+  transit: { lines: [], stops: [] }, ads: [], stack: [], selPoi: null, selWard: null, scope: 'all', catFilter: null,
+  origin: null, route: null, showWards: true, showMetro: true, session: Math.random().toString(36).slice(2), events: [],
+};
+const baseUrl = () => (S.settings.public_base_url || location.origin).replace(/\/$/, '');
+function track(type, data = {}) { S.events.push({ type, at: Math.floor(Date.now() / 1000), poi_id: data.poi_id, ward: data.ward || S.selWard, data }); }
+setInterval(flushEvents, 15000);
+function flushEvents() { if (!S.events.length) return; const events = S.events.splice(0); fetch('/api/public/events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ device: DEVICE, session: S.session, events }), keepalive: true }).catch(() => { }); }
+
+// ---------------------------------------------------------------- boot
+let map, osk;
+let pendingAutoRoute = null; // {id, mode}: chờ GPS thật khi URL có locate=1
+function registerSW() {
+  // Bộ nhớ đệm ngoại tuyến: giao diện, dữ liệu, bản đồ nền → kiosk khởi động nhanh, vẫn chạy khi mạng chập chờn
+  if (!('serviceWorker' in navigator) || !(location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) return;
+  if (S.settings.offline_cache === false) { navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister())); return; }
+  navigator.serviceWorker.register('/sw.js').catch(() => { });
+}
+async function boot() {
+  document.body.classList.toggle('kiosk', KIOSK);
+  document.documentElement.lang = LANG;
+  const b = S.boot = await api('/api/public/bootstrap' + (DEVICE ? `?device=${encodeURIComponent(DEVICE)}` : ''));
+  S.settings = b.settings || {}; S.device = b.device; S.cats = b.categories; S.cats.forEach(c => S.catMap[c.id] = c);
+  S.wards = b.wards; S.wards.forEach(w => S.wardMap[w.slug] = w);
+  $('#copyright').textContent = S.settings.copyright || 'Bản quyền thuộc về Công ty TNHH Công nghệ và Truyền thông Xanh24';
+  $('#idleFoot').textContent = $('#copyright').textContent;
+  document.title = S.settings.app_name || 'Xanh24 - Maps for Life';
+  const nat0 = nativeLoc(); if (nat0?.lat) S.live = { lat: nat0.lat, lng: nat0.lng, acc: nat0.acc || 0, src: nat0.src || 'android', at: Date.now() };
+  S.origin = resolveOrigin();
+  if (S.device?.ward_slug) { S.selWard = S.device.ward_slug; S.scope = 'ward'; }
+  const fromP = params.get('from');
+  if (fromP) { const [la, ln] = fromP.split(',').map(Number); if (la && ln) S.origin = { lat: la, lng: ln, label: t('start'), kind: 'shared' }; }
+  updateTitle();
+  const [pois, geo, transit] = await Promise.all([api('/api/public/pois'), api('/api/public/wards.geojson'), api('/api/public/transit')]);
+  S.pois = pois.items; S.pois.forEach(p => S.poiMap[p.id] = p);
+  S.wardGeo = geo; S.transit = transit;
+  if (!S.origin) {
+    const w = S.selWard && S.wardMap[S.selWard];
+    const c = S.settings.default_center || [105.8342, 21.0278];
+    S.origin = w?.hq ? { lat: w.hq[1], lng: w.hq[0], label: t('hq') + ' ' + w.short, kind: 'ward' } : { lat: c[1], lng: c[0], label: LANG === 'vi' ? 'Trung tâm Thành phố' : 'City centre', kind: 'default' };
+  }
+  initUI();
+  go({ v: 'home' }, false);
+
+  // Gọi khởi tạo bản đồ sau khi DOM giao diện đã chuẩn bị xong
+  initMap();
+  startGeo();
+  if (params.get('poi')) {
+    const id = +params.get('poi'), dir = params.get('dir');
+    if (dir && params.get('locate') === '1' && !fromP) {
+      pendingAutoRoute = { id, mode: dir };
+      openPoi(id);
+      toast(`${icon('locate', 18)} ${LANG === 'vi' ? 'Đang lấy vị trí hiện tại để vẽ đường…' : 'Getting your current location for directions…'}`, 0, 'auto-route-locate');
+    } else openPoi(id, { dir });
+  }
+  else if (params.get('pt')) {
+    const [la, ln] = params.get('pt').split(',').map(Number);
+    if (la && ln) {
+      const id = pickAt({ lat: la, lng: ln }, { name: params.get('name') || '' });
+      const dir = params.get('dir');
+      if (dir && params.get('locate') === '1' && !fromP) {
+        pendingAutoRoute = { id, mode: dir };
+        toast(`${icon('locate', 18)} ${LANG === 'vi' ? 'Đang lấy vị trí hiện tại để vẽ đường…' : 'Getting your current location for directions…'}`, 0, 'auto-route-locate');
+      } else if (dir) startRoute(id, dir);
+    }
+  }
+  else if (params.get('ward')) openWard(params.get('ward'));
+  if (KIOSK) initKiosk();
+  registerSW();
+  track('session_start', { kiosk: KIOSK });
+}
+
+function updateTitle() {
+  const w = S.selWard && S.wardMap[S.selWard];
+  $('#ttKicker').textContent = t('kicker');
+  $('#ttMain').textContent = w ? w.name : (S.settings.region_name || 'Thành phố Hà Nội');
+  $('#q').placeholder = t('search');
+  $('#langBtn').textContent = LANG === 'vi' ? 'EN' : 'VI';
+}
+
+// ---------------------------------------------------------------- map
+const PIN_SVG = (c) => `<svg class="pinbg" viewBox="0 0 40 48" width="40" height="48"><path d="M20 47s15-13.4 15-26.5C35 11.4 28.3 4 20 4S5 11.4 5 20.5C5 33.6 20 47 20 47z" fill="${c}" stroke="#fff" stroke-width="2.5"/></svg>`;
+let markers = [], wardLabels = [], stopMarkers = [], hereMarker = null, endMarker = null, tileFails = 0, tilesOk = false;
+
+function tileOption(id) {
+  const o = S.settings.tiles?.options || [];
+  return o.find(x => x.id === id) || o[0] || { id: 'ofm', style: 'https://tiles.openfreemap.org/styles/liberty' };
+}
+function styleFor(id) {
+  const opt = tileOption(id);
+  if (opt.style) return opt.style; // bản đồ vector (VD: OpenFreeMap) — URL style JSON
+  return {
+    version: 8, sources: { base: { type: 'raster', tiles: opt.tiles, tileSize: opt.tileSize || 256, attribution: opt.attribution, maxzoom: opt.maxzoom || 19 } },
+    layers: [{ id: 'bg', type: 'background', paint: { 'background-color': '#EEF2F6' } }, { id: 'base', type: 'raster', source: 'base', paint: { 'raster-fade-duration': 150 } }]
+  };
+}
+function initMap() {
+  S.tileId = store.get('x24_tiles') || S.settings.tiles?.active;
+  if (!(S.settings.tiles?.options || []).some(o => o.id === S.tileId)) S.tileId = S.settings.tiles?.active || (S.settings.tiles?.options || [])[0]?.id;
+  const c = S.settings.default_center || [105.8342, 21.0278];
+  document.body.classList.toggle('lite', LITE);
+  map = new maplibregl.Map({
+    container: 'map', style: styleFor(S.tileId),
+    center: c, zoom: S.settings.default_zoom || 12.3, minZoom: 9, maxZoom: 19, attributionControl: { compact: true },
+    dragRotate: false, pitchWithRotate: false, touchPitch: false, maxBounds: [[104.9, 20.4], [106.4, 21.5]], maxPitch: 0,
+    // Chế độ nhẹ cho màn hình kiosk/TV: vẽ ở mật độ điểm ảnh 1×, tắt hiệu ứng mờ dần, giới hạn bộ nhớ ô bản đồ
+    pixelRatio: LITE ? 1 : Math.min(window.devicePixelRatio || 1, 2), fadeDuration: LITE ? 0 : 300,
+    antialias: false, refreshExpiredTiles: false, maxTileCacheSize: LITE ? 120 : null, renderWorldCopies: false,
+  });
+  map.touchZoomRotate.disableRotation();
+  // Nguồn bản đồ nền lỗi liên tục → tự chuyển sang nguồn kế tiếp
+  map.on('error', (e) => {
+    const sid = e.sourceId || ''; if (sid && ['wards', 'mask', 'route', 'transit', 'here-acc'].includes(sid)) return;
+    if (!tilesOk && ++tileFails > 8) {
+      const opts = S.settings.tiles?.options || []; const i = opts.findIndex(o => o.id === S.tileId);
+      const next = opts[(i + 1) % opts.length]; if (next && next.id !== S.tileId) { tileFails = 0; setTiles(next.id, false); }
+    }
+  });
+  map.on('sourcedata', (e) => { if (e.tile && !['wards', 'mask', 'route', 'transit', 'here-acc'].includes(e.sourceId)) tilesOk = true; });
+  map.on('style.load', addOverlays);
+  map.on('load', () => {
+    S.mapReady = true;
+    buildWardLabels(); buildStopMarkers(); renderMarkers(); setHere();
+    fitInitial();
+  });
+  map.on('moveend', () => { renderMarkers(); updateWardLabels(); });
+  map.on('dragstart', () => { S.userMoved = true; });
+  map.on('click', onMapClick);
+  map.on('contextmenu', (e) => { if (!e.originalEvent._mk) pickAt(e.lngLat); });
+}
+// Các lớp riêng của Xanh24 — thêm lại mỗi khi đổi bản đồ nền
+function liteStyle() {
+  // Bỏ các lớp nặng của bản đồ nền (nhà 3D, địa hình, ảnh nền phụ) — giảm tải GPU trên kiosk
+  try {
+    (map.getStyle().layers || []).forEach(l => {
+      if (l.type === 'fill-extrusion' || l.type === 'hillshade' || (l.type === 'raster' && l.id !== 'base')) map.removeLayer(l.id);
+      else if (l.type === 'symbol' && /housenum|poi_r20|poi_transit|aeroway|water_way|waterway_line_label/.test(l.id)) map.setLayoutProperty(l.id, 'visibility', 'none');
+    });
+  } catch (e) { }
+}
+function addOverlays() {
+  if (LITE) liteStyle();
+  const add = (id, def) => { if (!map.getSource(id)) map.addSource(id, def); };
+  add('wards', { type: 'geojson', data: S.wardGeo, promoteId: 'slug' });
+  add('mask', { type: 'geojson', data: emptyFC() });
+  add('route', { type: 'geojson', data: S.route?.features ? { type: 'FeatureCollection', features: S.route.features } : emptyFC() });
+  add('transit', { type: 'geojson', data: transitFC() });
+  add('here-acc', { type: 'geojson', data: emptyFC() });
+  const L = (def) => { if (!map.getLayer(def.id)) map.addLayer(def); };
+  const SEL = ['boolean', ['feature-state', 'sel'], false];
+  L({ id: 'mask', type: 'fill', source: 'mask', paint: { 'fill-color': '#0B1B3F', 'fill-opacity': 0.42 } });
+  L({ id: 'w-fill', type: 'fill', source: 'wards', paint: { 'fill-color': ['case', SEL, '#22C98A', '#2A62B8'], 'fill-opacity': ['case', SEL, 0.16, 0.03] } });
+  L({ id: 'w-line', type: 'line', source: 'wards', paint: { 'line-color': '#14346F', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 0.8, 15, 1.8], 'line-opacity': 0.6, 'line-dasharray': [3, 2] } });
+  L({ id: 'w-sel-glow', type: 'line', source: 'wards', filter: ['==', ['get', 'slug'], S.selWard || ''], layout: { 'line-join': 'round' }, paint: { 'line-color': '#FFFFFF', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 7, 16, 12], 'line-opacity': 0.95, 'line-blur': 1 } });
+  L({ id: 'w-sel', type: 'line', source: 'wards', filter: ['==', ['get', 'slug'], S.selWard || ''], layout: { 'line-join': 'round' }, paint: { 'line-color': '#0FA968', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 3.5, 16, 6.5] } });
+  L({ id: 'here-acc-fill', type: 'fill', source: 'here-acc', paint: { 'fill-color': '#2A62B8', 'fill-opacity': 0.12 } });
+  L({ id: 'here-acc-line', type: 'line', source: 'here-acc', paint: { 'line-color': '#2A62B8', 'line-opacity': 0.5, 'line-width': 1.5 } });
+  L({ id: 'transit-case', type: 'line', source: 'transit', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#fff', 'line-width': 7, 'line-opacity': 0.9 } });
+  L({ id: 'transit-line', type: 'line', source: 'transit', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ['get', 'color'], 'line-width': 4 } });
+  // Lộ trình: viền trắng + nét đậm; chặng đi bộ dùng lớp chấm riêng (tránh dasharray theo dữ liệu)
+  L({ id: 'route-case', type: 'line', source: 'route', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#FFFFFF', 'line-width': 11 } });
+  L({ id: 'route-line', type: 'line', source: 'route', filter: ['!=', ['get', 'kind'], 'walk'], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ['coalesce', ['get', 'color'], '#2A62B8'], 'line-width': 7 } });
+  L({ id: 'route-walk', type: 'line', source: 'route', filter: ['==', ['get', 'kind'], 'walk'], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ['coalesce', ['get', 'color'], '#2A62B8'], 'line-width': 7, 'line-dasharray': [0.1, 1.8] } });
+  applyWardSel(false);
+  applyOverlays();
+  updateAcc();
+}
+const emptyFC = () => ({ type: 'FeatureCollection', features: [] });
+function transitFC() {
+  return { type: 'FeatureCollection', features: S.transit.lines.filter(l => l.geometry).map(l => ({ type: 'Feature', properties: { code: l.code, color: l.color, kind: l.kind }, geometry: l.geometry })) };
+}
+function setTiles(id, save = true) {
+  S.tileId = id; if (save) store.set('x24_tiles', id); tilesOk = false; tileFails = 0;
+  map.setStyle(styleFor(id)); // style.load → addOverlays()
+}
+function fitInitial() {
+  const w = S.selWard && wardFeature(S.selWard);
+  if (w) fitGeom(w.geometry, 0);
+  else if (S.origin && S.origin.kind !== 'default') map.jumpTo({ center: [S.origin.lng, S.origin.lat], zoom: 14.5 });
+}
+const wardFeature = (slug) => S.wardGeo.features.find(f => f.properties.slug === slug);
+function geomBounds(g) {
+  const b = new maplibregl.LngLatBounds();
+  const add = (c) => typeof c[0] === 'number' ? b.extend(c) : c.forEach(add);
+  add(g.coordinates); return b;
+}
+function mapPadding() {
+  if (MOBILE()) { const h = $('#panel').getBoundingClientRect().height; return { top: 70, bottom: Math.min(h + 30, window.innerHeight * .6), left: 30, right: 30 }; }
+  return { top: 60, bottom: 60, left: 60, right: 90 };
+}
+function fitGeom(g, duration = 700, maxZoom = 16) { map.fitBounds(geomBounds(g), { padding: mapPadding(), duration, maxZoom }); }
+function applyWardSel(fit = true) {
+  if (!map.getSource('wards')) return;
+  S.wardGeo.features.forEach(f => map.setFeatureState({ source: 'wards', id: f.properties.slug }, { sel: f.properties.slug === S.selWard }));
+  ['w-sel', 'w-sel-glow'].forEach(l => map.getLayer(l) && map.setFilter(l, ['==', ['get', 'slug'], S.selWard || '']));
+  const f = S.selWard && wardFeature(S.selWard);
+  const world = [[-180, -85], [180, -85], [180, 85], [-180, 85], [-180, -85]];
+  if (f && S.showWards) {
+    const holes = f.geometry.type === 'Polygon' ? [f.geometry.coordinates[0]] : f.geometry.coordinates.map(p => p[0]);
+    map.getSource('mask').setData({ type: 'Feature', geometry: { type: 'Polygon', coordinates: [world, ...holes] } });
+  } else map.getSource('mask').setData(emptyFC());
+  updateWardLabels();
+  if (fit && f) fitGeom(f.geometry);
+}
+function buildWardLabels() {
+  wardLabels.forEach(m => m.remove()); wardLabels = [];
+  S.wardGeo.features.forEach(f => {
+    const c = f.properties.center; if (!c) return;
+    const el = document.createElement('div'); el.className = 'mk-ward'; el.textContent = f.properties.short;
+    el.dataset.slug = f.properties.slug;
+    el.addEventListener('click', (e) => { e.stopPropagation(); e._mk = true; openWard(f.properties.slug); });
+    wardLabels.push(new maplibregl.Marker({ element: el }).setLngLat(c).addTo(map));
+  });
+  updateWardLabels();
+}
+function updateWardLabels() {
+  const z = map.getZoom();
+  wardLabels.forEach(m => { const el = m.getElement(); const sel = el.dataset.slug === S.selWard; el.classList.toggle('sel', sel); el.style.display = S.showWards && (sel ? z < 15.5 : (z > 11.2 && z < 14.8)) ? '' : 'none'; });
+}
+function buildStopMarkers() {
+  stopMarkers.forEach(m => m.remove()); stopMarkers = [];
+  S.transit.stops.forEach(s => {
+    const line = S.transit.lines.find(l => (s.lines || []).includes(l.code));
+    const el = document.createElement('div'); el.className = 'mk-stop'; el.style.setProperty('--c', line?.color || '#0E8FB0');
+    el.textContent = s.kind === 'metro' ? 'M' : 'B'; el.title = s.name;
+    el.addEventListener('click', (e) => { e.stopPropagation(); e._mk = true; go({ v: 'transit', focus: s.id }); });
+    stopMarkers.push(new maplibregl.Marker({ element: el }).setLngLat([s.lng, s.lat]).addTo(map));
+  });
+}
+function applyOverlays() {
+  const vis = S.showWards ? 'visible' : 'none';
+  ['w-fill', 'w-line', 'w-sel', 'w-sel-glow', 'mask'].forEach(l => map.getLayer(l) && map.setLayoutProperty(l, 'visibility', vis));
+  const mv = S.showMetro ? 'visible' : 'none';
+  ['transit-case', 'transit-line'].forEach(l => map.getLayer(l) && map.setLayoutProperty(l, 'visibility', mv));
+  stopMarkers.forEach(m => m.getElement().style.display = S.showMetro ? '' : 'none');
+  updateWardLabels();
+}
+function setHere() {
+  hereMarker?.remove();
+  if (!S.origin) return;
+  const el = document.createElement('div'); el.className = 'mk-here';
+  el.innerHTML = `<div class="halo"></div><div class="dot"></div>${S.origin.kind === 'kiosk' || S.origin.kind === 'gps' ? `<div class="lbl">${esc(S.origin.kind === 'kiosk' ? t('youAreHere') : t('here'))}</div>` : ''}`;
+  el.classList.toggle('approx', !['kiosk', 'gps', 'shared'].includes(S.origin.kind));
+  hereMarker = new maplibregl.Marker({ element: el }).setLngLat([S.origin.lng, S.origin.lat]).addTo(map);
+  updateAcc();
+}
+// ---------------------------------------------------------------- định vị thật (GPS / Wi-Fi của thiết bị)
+const IN_AREA = (p) => p && p.lng > 104.9 && p.lng < 106.4 && p.lat > 20.4 && p.lat < 21.5;
+function nativeLoc() { try { return window.X24Android?.location ? JSON.parse(window.X24Android.location()) : null; } catch (e) { return null; } }
+/* Thứ tự ưu tiên điểm xuất phát:
+   Kiosk: vị trí đặt máy ghim trong ứng dụng Android → GPS thiết bị (chính xác ≤ 50 m, chế độ "auto"/"gps")
+          → toạ độ quản trị khai báo → GPS kém chính xác (≤ 500 m).
+   Web/điện thoại: vị trí thật của người dùng (khi cho phép định vị và đang ở khu vực bản đồ). */
+function resolveOrigin() {
+  if (S.origin?.kind === 'shared') return S.origin;
+  const L = S.live, yh = t('youAreHere');
+  if (KIOSK) {
+    const nat = nativeLoc();
+    if (nat?.pinned && nat.lat) return { lat: nat.lat, lng: nat.lng, acc: 0, label: yh, kind: 'kiosk', src: 'app' };
+    const mode = S.device?.location_mode || 'auto';
+    // "auto": dùng GPS/Wi-Fi của thiết bị khi đủ chính xác, hoặc khi toạ độ khai báo lệch xa vị trí thật (VD: còn để toạ độ mẫu)
+    const far = L && S.device?.lat && hav(L, { lat: S.device.lat, lng: S.device.lng }) > Math.max(300, 3 * (L.acc || 0));
+    if (L && IN_AREA(L) && (mode === 'gps' || (mode === 'auto' && (L.acc <= 100 || far)))) return { lat: L.lat, lng: L.lng, acc: L.acc, label: yh, kind: 'kiosk', src: L.src };
+    if (S.device?.lat) return { lat: S.device.lat, lng: S.device.lng, acc: 0, label: yh, kind: 'kiosk', src: 'admin' };
+    if (L && IN_AREA(L)) return { lat: L.lat, lng: L.lng, acc: L.acc, label: yh, kind: 'kiosk', src: L.src };
+    return null;
+  }
+  if (L && IN_AREA(L)) return { lat: L.lat, lng: L.lng, acc: L.acc, label: t('here'), kind: 'gps', src: L.src };
+  return null;
+}
+function applyOrigin() {
+  const o = resolveOrigin(); if (!o) return false;
+  const prev = S.origin;
+  if (prev && prev.kind === o.kind && hav(prev, o) < 12) { prev.acc = o.acc; prev.src = o.src; updateAcc(); return false; }
+  S.origin = o; if (S.mapReady) setHere();
+  const v = S.stack[S.stack.length - 1]?.v;
+  if (['home', 'list', 'pick', 'ward', 'poi', 'transit'].includes(v)) render();
+  return true;
+}
+function circleFC(c, r) {
+  const pts = [], k = r / 6378137 * 180 / Math.PI;
+  for (let i = 0; i <= 48; i++) { const a = i / 48 * 2 * Math.PI; pts.push([c.lng + k * Math.cos(a) / Math.cos(c.lat * Math.PI / 180), c.lat + k * Math.sin(a)]); }
+  return { type: 'FeatureCollection', features: [{ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [pts] } }] };
+}
+function updateAcc() {
+  const src = map?.getSource?.('here-acc'); if (!src) return;
+  const o = S.origin; src.setData(o && o.acc > 15 && o.acc < 3000 ? circleFC(o, o.acc) : emptyFC());
+}
+let geoFirst = true;
+function onFix(lat, lng, acc, srcName) {
+  if (!isFinite(lat) || !isFinite(lng)) return;
+  S.live = { lat, lng, acc: Math.round(acc || 0), src: srcName, at: Date.now() };
+  const changed = applyOrigin();
+  if (pendingAutoRoute && S.origin && S.origin.kind === 'gps') {
+    const r = pendingAutoRoute; pendingAutoRoute = null; hideToast('auto-route-locate');
+    startRoute(r.id, r.mode);
+  }
+  if (changed && geoFirst && S.mapReady && !S.userMoved && S.stack.length <= 1 && !params.get('poi') && !params.get('pt')) {
+    map.flyTo({ center: [S.origin.lng, S.origin.lat], zoom: Math.max(map.getZoom(), 15), padding: mapPadding(), duration: 900 });
+  }
+  if (changed) geoFirst = false;
+}
+function startGeo() {
+  const fromNative = (l) => { if (l && l.lat) onFix(+l.lat, +l.lng, +l.acc || 0, l.src || 'android'); else applyOrigin(); };
+  window.X24NativeLocation = fromNative;
+  if (window.__x24NatLoc) fromNative(window.__x24NatLoc);
+  if (S.live) applyOrigin();
+  // Hỏi lại ứng dụng Android định kỳ (máy đứng yên có thể không phát sự kiện vị trí mới)
+  if (window.X24Android?.location) setInterval(() => { const l = nativeLoc(); if (l?.lat) fromNative(l); }, 15000);
+  if (!navigator.geolocation) return;
+  const opts = { enableHighAccuracy: true, maximumAge: 20000, timeout: 25000 };
+  try {
+    S.geoWatch = navigator.geolocation.watchPosition((p) => onFix(p.coords.latitude, p.coords.longitude, p.coords.accuracy, 'browser'), (err) => {
+      if (err.code === 1 && !KIOSK && !S.geoWarned) {
+        S.geoWarned = true;
+        if (pendingAutoRoute) hideToast('auto-route-locate');
+        toast(`${icon('locate', 18)} ${LANG === 'vi' ? 'Hãy cho phép truy cập vị trí để tự động vẽ đường từ đúng chỗ bạn đứng' : 'Allow location access to automatically draw directions from where you are'}`, 7000);
+      }
+    }, opts);
+  } catch (e) { }
+}
+function visiblePois() {
+  let list = S.pois;
+  if (S.catFilter) list = list.filter(p => p.category === S.catFilter);
+  return list;
+}
+function renderMarkers() {
+  if (!map || !S.mapReady) return;
+  const old = new Map(markers.map(m => [m._x24key, m])); markers = [];
+  const keep = (key, make) => { let m = old.get(key); if (m) old.delete(key); else { m = make(); m._x24key = key; } markers.push(m); };
+  const list = S.route ? S.pois.filter(p => p.id === S.selPoi) : visiblePois();
+  const z = map.getZoom();
+  const bounds = map.getBounds();
+  let inView = list.filter(p => bounds.contains([p.lng, p.lat]) || p.id === S.selPoi);
+  if (LITE && inView.length > 150) inView = inView.filter(p => p.featured || p.id === S.selPoi).concat(inView.filter(p => !p.featured)).slice(0, 150);
+  const cell = z < 13.5 ? 64 : 0;
+  const groups = new Map();
+  inView.forEach(p => {
+    if (!cell || p.id === S.selPoi) { groups.set('p' + p.id, [p]); return; }
+    const pt = map.project([p.lng, p.lat]); const k = Math.floor(pt.x / cell) + ':' + Math.floor(pt.y / cell);
+    (groups.get(k) || groups.set(k, []).get(k)).push(p);
+  });
+  for (const g of groups.values()) {
+    if (g.length === 1) {
+      const p = g[0], c = S.catMap[p.category] || {};
+      keep(`p${p.id}:${p.id === S.selPoi ? 1 : 0}`, () => {
+        const el = document.createElement('div');
+        el.className = 'mk' + (p.id === S.selPoi ? ' sel' : '') + (p.featured ? ' feat' : '');
+        el.innerHTML = PIN_SVG(c.color || '#2A62B8') + `<span class="mk-ic">${icon(c.icon || 'pin', 22)}</span>`;
+        el.addEventListener('click', (e) => { e.stopPropagation(); openPoi(p.id); });
+        return new maplibregl.Marker({ element: el, anchor: 'bottom' }).setLngLat([p.lng, p.lat]).addTo(map);
+      });
+    } else {
+      const lng = g.reduce((s, p) => s + p.lng, 0) / g.length, lat = g.reduce((s, p) => s + p.lat, 0) / g.length;
+      keep(`c${g.map(p => p.id).sort((a, b) => a - b).join(',')}`, () => {
+        const el = document.createElement('div'); el.className = 'mk-cluster'; el.textContent = g.length;
+        el.addEventListener('click', (e) => { e.stopPropagation(); const b = new maplibregl.LngLatBounds(); g.forEach(p => b.extend([p.lng, p.lat])); map.fitBounds(b, { padding: mapPadding(), maxZoom: 16, duration: 600 }); });
+        return new maplibregl.Marker({ element: el }).setLngLat([lng, lat]).addTo(map);
+      });
+    }
+  }
+  old.forEach(m => m.remove());
+}
+
+// ---------------------------------------------------------------- navigation
+function go(view, push = true) {
+  if (push) S.stack.push(view); else S.stack = [view];
+  render();
+}
+function back() {
+  const leaving = S.stack[S.stack.length - 1];
+  if (S.stack.length > 1) S.stack.pop();
+  if (leaving?.v === 'ward' && S.selWard && S.selWard !== S.device?.ward_slug && !S.stack.some(x => x.v === 'ward')) { S.selWard = S.device?.ward_slug || null; applyWardSel(false); updateTitle(); }
+  const v = S.stack[S.stack.length - 1];
+  if (v.v !== 'route') clearRoute();
+  if (v.v === 'home' || v.v === 'list') { S.selPoi = null; endMarker?.remove(); }
+  render(); renderMarkers();
+}
+function render() {
+  const v = S.stack[S.stack.length - 1] || { v: 'home' };
+  const body = $('#panelBody');
+  const fn = VIEWS[v.v] || VIEWS.home;
+  body.innerHTML = fn(v);
+  body.scrollTop = 0;
+  body.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon, +el.dataset.size || 22); });
+  AFTER[v.v]?.(v);
+  syncPickMarker(v);
+  if (MOBILE()) setSheet(v.v === 'home' ? 'half' : v.v === 'route' ? 'half' : 'half');
+}
+const backBtn = () => `<button class="back" data-act="back" aria-label="${t('back')}">${icon('back', 22)}</button>`;
+const catIcon = (c, size = 22) => `<span class="ci" style="--c:${c?.color || '#2A62B8'}">${icon(c?.icon || 'pin', size)}</span>`;
+function distTo(p) { return S.origin ? hav(S.origin, p) : null; }
+function poiItem(p, q = '') {
+  const c = S.catMap[p.category] || {}; const d = distTo(p); const img = p.images?.[0]?.thumb || p.images?.[0]?.url;
+  return `<button class="item${p.id === S.selPoi ? ' sel' : ''}" data-act="poi" data-id="${p.id}">
+    <span class="th" style="--c:${c.color}">${img ? `<img src="${esc(img)}" alt="" loading="lazy">` : icon(c.icon || 'pin', 28)}</span>
+    <span class="ib"><b>${hl(p.name, q)}</b>
+      <span class="meta"><span class="tag tcat" style="--c:${c.color}">${esc(catName(c))}</span>${d != null ? `<span class="tag dist">${fmtDist(d)}</span>` : ''}${p.has_vr ? `<span class="tag vr">VR360</span>` : ''}</span>
+      ${p.address ? `<span class="addr">${hl(p.address, q)}</span>` : ''}</span></button>`;
+}
+const catName = (c) => (LANG === 'en' && c?.name_en) ? c.name_en : (c?.name || '');
+
+// ---------------------------------------------------------------- views
+const VIEWS = {
+  home() {
+    const w = S.selWard && S.wardMap[S.selWard];
+    const inScope = (p) => S.scope !== 'ward' || !S.selWard || p.ward_slug === S.selWard;
+    const featured = S.pois.filter(p => p.featured && inScope(p)).concat(S.pois.filter(p => !p.featured && inScope(p) && p.images?.length)).slice(0, 10);
+    const feat = featured.length ? featured : S.pois.filter(p => p.featured).slice(0, 10);
+    const mods = S.boot.modules || [];
+    return `<div class="pv">
+      <div class="hello"><h2>${t('hello')}</h2><p>${t('helloSub')}</p>
+        ${S.origin ? `<span class="here-line">${icon(S.origin.kind === 'gps' ? 'locate' : 'pin', 16)} ${esc(S.origin.kind === 'kiosk' ? `${t('youAreHere')}${S.device?.name ? ' · ' + S.device.name : ''}${S.origin.acc > 15 ? ` · ±${fmtDist(S.origin.acc)}` : ''}` : S.origin.kind === 'gps' ? `${t('here')}${S.origin.acc ? ` · ±${fmtDist(S.origin.acc)}` : ''}` : S.origin.kind === 'shared' ? S.origin.label : (LANG === 'vi' ? `Chưa định vị — xuất phát tạm từ ${w ? w.name : S.origin.label}` : `Location off — starting from ${w ? w.name : S.origin.label}`))}</span>` : ''}</div>
+      <div class="pick-hint">${icon('touch', 20)}<span>${t('pickHint')}</span></div>
+      <div class="quick">
+        <button class="qa" data-act="near"><span class="qi">${icon('locate')}</span><span>${t('near')}<small>${t('nearSub')}</small></span></button>
+        <button class="qa" data-act="transit"><span class="qi">${icon('metro')}</span><span>${t('transit')}<small>${t('transitSub')}</small></span></button>
+        <button class="qa" data-act="wards"><span class="qi">${icon('map')}</span><span>${t('wards')}<small>${t('wardsSub')}</small></span></button>
+        <button class="qa" data-act="cat" data-id="hanh-chinh"><span class="qi">${icon('building')}</span><span>${esc(catName(S.catMap['hanh-chinh']) || 'Hành chính')}<small>${S.catMap['hanh-chinh']?.count || 0} ${t('places').toLowerCase()}</small></span></button>
+      </div>
+      <div class="sec"><h3>${t('explore')}</h3></div>
+      <div class="cats">${S.cats.filter(c => c.count > 0).slice(0, 12).map(c => `<button class="cat" data-act="cat" data-id="${c.id}" style="--c:${c.color}">${catIcon(c)}<b>${esc(catName(c))}</b><small>${c.count}</small></button>`).join('')}</div>
+      ${feat.length ? `<div class="sec"><h3>${t('featured')}</h3></div><div class="hscroll">${feat.map(p => { const c = S.catMap[p.category] || {}; const img = p.images?.[0]?.thumb; return `<button class="fcard" data-act="poi" data-id="${p.id}" style="--c:${c.color}"><div class="ph">${img ? `<img src="${esc(img)}" alt="" loading="lazy">` : icon(c.icon, 40)}${p.has_vr ? '<span class="tag vr vrb">VR360</span>' : ''}</div><div class="fb"><b>${esc(p.name)}</b><small>${esc(catName(c))}${distTo(p) != null ? ' · ' + fmtDist(distTo(p)) : ''}</small></div></button>`; }).join('')}</div>` : ''}
+      ${mods.length ? `<div class="sec"><h3>${t('utilities')}</h3></div><div class="mods">${mods.map(m => `<button class="mod" data-act="module" data-key="${esc(m.key)}"><span class="mi" style="--c:${esc(m.color || '#2A62B8')}">${icon(m.icon || 'grid', 24)}</span>${esc(m.name)}</button>`).join('')}</div>` : ''}
+    </div>`;
+  },
+  list(v) {
+    const c = v.cat ? S.catMap[v.cat] : null;
+    let list = S.pois.filter(p => (!v.cat || p.category === v.cat));
+    if (v.near) list = list.filter(p => distTo(p) < 1000);
+    if (S.scope === 'ward' && S.selWard && !v.near) list = list.filter(p => p.ward_slug === S.selWard);
+    list = list.map(p => [p, distTo(p) ?? 0]).sort((a, b) => a[1] - b[1]).map(x => x[0]);
+    const w = S.selWard && S.wardMap[S.selWard];
+    return `<div class="pv"><div class="pv-head">${backBtn()}<div><h2 class="pv-title">${esc(v.near ? t('near') : catName(c))}</h2><div class="pv-sub">${list.length} ${t('results')}</div></div></div>
+      ${w && !v.near ? `<div class="chips"><button class="chip${S.scope === 'ward' ? ' on' : ''}" data-act="scope" data-s="ward">${icon('pin', 16)} ${esc(w.short)}</button><button class="chip${S.scope === 'all' ? ' on' : ''}" data-act="scope" data-s="all">${t('allCity')}</button></div>` : ''}
+      <div class="list">${list.length ? list.map(p => poiItem(p)).join('') : `<div class="empty"><div class="ei">${icon('inbox', 30)}</div>${t('noResult')}</div>`}</div></div>`;
+  },
+  search(v) {
+    const q = v.q.trim(), nq = norm(q);
+    const toks = nq.split(/\s+/).filter(Boolean);
+    const all = (txt) => toks.every(k => txt.includes(k));
+    const score = (p) => { const n = norm(p.name); if (n.startsWith(nq)) return 4; if (n.includes(nq)) return 3; if (all(n)) return 2; if (all(n + ' ' + norm(p.address + ' ' + p.tags + ' ' + (S.catMap[p.category]?.name || '') + ' ' + (S.wardMap[p.ward_slug]?.name || '')))) return 1; return 0; };
+    const places = S.pois.map(p => [p, score(p)]).filter(x => x[1] > 0).sort((a, b) => b[1] - a[1] || (distTo(a[0]) - distTo(b[0]))).slice(0, 40).map(x => x[0]);
+    const wards = S.wards.filter(w => toks.every(k => norm(w.name).includes(k))).slice(0, 8);
+    const stops = S.transit.stops.filter(s => toks.every(k => norm(s.name).includes(k))).slice(0, 8);
+    const none = !places.length && !wards.length && !stops.length && q.length < 3;
+    return `<div class="pv"><div class="pv-head">${backBtn()}<div><h2 class="pv-title">“${esc(q)}”</h2><div class="pv-sub">${places.length + wards.length + stops.length} ${t('results')}</div></div></div>
+      ${none ? `<div class="empty"><div class="ei">${icon('search', 30)}</div>${t('noResult')}</div>` : ''}
+      ${wards.length ? `<div class="sr-group"><h4>${t('wards')}</h4><div class="list">${wards.map(w => `<button class="item" data-act="ward" data-slug="${w.slug}"><span class="th">${icon('map', 26)}</span><span class="ib"><b>${hl(w.name, q)}</b><span class="addr">${w.area_km2 ? w.area_km2.toString().replace('.', ',') + ' km² · ' : ''}${w.poi_count} ${t('places').toLowerCase()}</span></span></button>`).join('')}</div></div>` : ''}
+      ${places.length ? `<div class="sr-group"><h4>${t('places')}</h4><div class="list">${places.map(p => poiItem(p, q)).join('')}</div></div>` : ''}
+      ${stops.length ? `<div class="sr-group"><h4>${t('stations')}</h4><div class="list">${stops.map(s => stopItem(s)).join('')}</div></div>` : ''}
+      ${q.length >= 3 ? `<div class="sr-group"><h4>${LANG === 'vi' ? 'Địa chỉ & địa điểm khác trên bản đồ' : 'Other addresses & places'}</h4><div class="list" id="geoRes">${geoResHTML(q)}</div></div>` : ''}</div>`;
+  },
+  poi(v) {
+    const p = S.detail[v.id] || S.poiMap[v.id];
+    if (!p) return `<div class="pv"><div class="pv-head">${backBtn()}</div><div class="empty">${t('loading')}</div></div>`;
+    const c = S.catMap[p.category] || {}; const d = distTo(p); const imgs = p.images || []; const full = !!S.detail[v.id];
+    const ride = S.settings.ride || {};
+    const w = p.ward_slug && S.wardMap[p.ward_slug];
+    return `<div class="pv">
+      <div class="gallery" style="--c:${c.color}">
+        ${imgs.length ? `<div class="track">${imgs.map(i => `<img src="${esc(i.url)}" alt="${esc(p.name)}">`).join('')}</div>${imgs.length > 1 ? `<span class="count">${imgs.length} ảnh</span>` : ''}` : `<div class="noimg">${icon(c.icon || 'pin', 64)}</div>`}
+        <div class="gtop"><button class="round" data-act="back" aria-label="${t('back')}">${icon('back')}</button>${p.vr360 || p.has_vr ? `<button class="round" data-act="vr" data-id="${p.id}" aria-label="VR360" style="color:#6445C9">${icon('vr')}</button>` : '<span></span>'}</div>
+      </div>
+      <h2 class="d-title">${esc(LANG === 'en' && p.name_en ? p.name_en : p.name)}</h2>
+      <div class="d-meta"><span class="tag tcat" style="--c:${c.color}">${esc(catName(c))}</span>${w ? `<span class="tag">${esc(w.name)}</span>` : ''}${d != null ? `<span class="tag dist">${icon('walk', 14)} ${fmtDist(d)}</span>` : ''}${p.code ? `<span class="tag">${esc(p.code)}</span>` : ''}</div>
+      <div class="actions">
+        <button class="act primary" data-act="route" data-id="${p.id}"><span class="ai">${icon('route', 26)}</span>${t('directions')}</button>
+        ${(p.vr360 || p.has_vr) ? `<button class="act vr" data-act="vr" data-id="${p.id}"><span class="ai">${icon('vr', 26)}</span>${t('vr')}</button>` : `<button class="act" data-act="share" data-id="${p.id}"><span class="ai">${icon('qr', 26)}</span>${t('share')}</button>`}
+        ${ride.grab ? `<button class="act grab" data-act="ride" data-p="grab" data-id="${p.id}"><span class="ai">${icon('moto', 26)}</span>${t('grab')}</button>` : ''}
+        ${ride.xanhsm ? `<button class="act xanh" data-act="ride" data-p="xanhsm" data-id="${p.id}"><span class="ai">${icon('taxi', 26)}</span>${t('xanhsm')}</button>` : ''}
+      </div>
+      ${p.extra?.verify ? `<div class="verify">${icon('info', 18)} ${t('verify')}</div>` : ''}
+      <div class="rows">
+        ${p.address ? `<div class="row"><span class="ri">${icon('pin', 20)}</span><span>${esc(p.address)}</span></div>` : ''}
+        ${p.hours ? `<div class="row"><span class="ri">${icon('clock', 20)}</span><span>${esc(p.hours)}</span></div>` : ''}
+        ${p.phone ? `<div class="row"><span class="ri">${icon('phone', 20)}</span><span>${KIOSK ? esc(p.phone) : `<a href="tel:${esc(p.phone.replace(/\s/g, ''))}">${esc(p.phone)}</a>`}</span></div>` : ''}
+        ${p.website ? `<div class="row"><span class="ri">${icon('globe', 20)}</span><span>${KIOSK ? esc(p.website) : `<a href="${esc(p.website)}" target="_blank" rel="noopener">${esc(p.website)}</a>`}</span></div>` : ''}
+        <div class="row"><span class="ri">${icon('compass', 20)}</span><span>${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}</span></div>
+      </div>
+      ${p.description ? `<p class="desc">${esc(p.description)}</p>` : ''}
+      ${full && p.nearby_stops?.length ? `<div class="sec"><h3>${t('nearbyStops')}</h3></div><div class="list stops">${p.nearby_stops.map(s => stopItem(s, s.distance)).join('')}</div>` : ''}
+      <div class="sec"><h3>${t('scanShare')}</h3></div>
+      <div class="qrbox"><div class="qr">${qrSVG(`${baseUrl()}/?poi=${p.id}`, { size: 112 })}</div><div><b>${esc(p.name)}</b><small>${t('scanShareSub')}</small></div></div>
+    </div>`;
+  },
+  pick(v) {
+    const p = S.poiMap[v.id]; if (!p) return VIEWS.home();
+    const d = distTo(p); const w = p.ward_slug && S.wardMap[p.ward_slug]; const ride = S.settings.ride || {};
+    const near = S.pois.map(x => [x, hav(p, x)]).filter(x => x[1] < 800).sort((a, b) => a[1] - b[1]).slice(0, 4);
+    const kind = p.kind ? `<span class="tag">${esc(p.kind)}</span>` : '';
+    return `<div class="pv">
+      <div class="pv-head">${backBtn()}<div style="min-width:0"><h2 class="pv-title">${esc(p.name || t('pinned'))}</h2><div class="pv-sub">${p.address ? esc(p.address) : (p.loading ? `<span class="shimmer">${t('pinAddr')}</span>` : esc(t('pinned')))}</div></div></div>
+      <div class="d-meta" style="margin-top:0">${kind}${w ? `<button class="tag wardtag" data-act="pinward" data-slug="${esc(w.slug)}">${icon('map', 14)} ${esc(w.name)}</button>` : `<span class="tag">${t('outside')}</span>`}${d != null ? `<span class="tag dist">${icon('walk', 14)} ${fmtDist(d)}</span>` : ''}</div>
+      <div class="actions">
+        <button class="act primary" data-act="route" data-id="${p.id}"><span class="ai">${icon('route', 26)}</span>${t('directions')}</button>
+        <button class="act" data-act="share" data-id="${p.id}"><span class="ai">${icon('qr', 26)}</span>${t('share')}</button>
+        ${ride.grab ? `<button class="act grab" data-act="ride" data-p="grab" data-id="${p.id}"><span class="ai">${icon('moto', 26)}</span>${t('grab')}</button>` : ''}
+        ${ride.xanhsm ? `<button class="act xanh" data-act="ride" data-p="xanhsm" data-id="${p.id}"><span class="ai">${icon('taxi', 26)}</span>${t('xanhsm')}</button>` : ''}
+      </div>
+      <div class="rows">
+        ${p.address ? `<div class="row"><span class="ri">${icon('pin', 20)}</span><span>${esc(p.address)}</span></div>` : ''}
+        <div class="row"><span class="ri">${icon('compass', 20)}</span><span>${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}</span></div>
+      </div>
+      ${near.length ? `<div class="sec"><h3>${t('nearPlaces')}</h3></div><div class="list">${near.map(([x]) => poiItem(x)).join('')}</div>` : ''}
+      <div class="sec"><h3>${LANG === 'vi' ? 'Bến xe buýt & ga Metro gần điểm này' : 'Bus stops & metro near this point'}</h3></div><div id="pickT">${nearbyHTML(p.nearT)}</div>
+      <div class="note">${icon('touch', 16)} ${t('pickAgain')}</div>
+    </div>`;
+  },
+  route(v) {
+    const p = S.detail[v.id] || S.poiMap[v.id]; const r = S.route;
+    const modes = [['foot', 'walk', t('walk')], ['bike', 'bike', t('bike')], ['driving', 'moto', t('drive')], ['transit', 'metro', t('bus')]];
+    let body = `<div class="empty"><div class="spin" style="margin:0 auto 10px;border-color:var(--line);border-top-color:var(--blue)"></div>${v.mode === 'transit' ? (LANG === 'vi' ? 'Đang tìm tuyến xe buýt & metro…' : 'Finding bus & metro routes…') : t('loading')}</div>`;
+    if (r && r.mode === v.mode) {
+      if (v.mode === 'transit') body = transitPlanHTML(r, p);
+      else {
+        const [n, u] = fmtDur(r.duration);
+        body = `<div class="summary"><span class="big">${n}</span><span class="unit">${u}</span><span class="dist">${fmtDist(r.distance)}${r.source === 'estimate' ? ' · ' + t('estimate') : ''}</span></div>
+          <div class="sec" style="margin-top:0"><h3>${t('steps')}</h3></div>
+          <div class="steps">${r.steps.map((s, i) => `<button class="step" data-act="step" data-i="${i}"><span class="sn">${i + 1}</span><span>${esc(s.text)}${s.distance ? `<small>${fmtDist(s.distance)}</small>` : ''}</span></button>`).join('')}</div>
+          ${!p.isStop ? `<div class="sec"><h3>${LANG === 'vi' ? 'Bến xe buýt & ga Metro gần bạn' : 'Nearest bus stops & metro'}</h3></div><div id="nearT">${nearbyHTML(S.nearT)}</div>` : ''}`;
+      }
+    }
+    const shareUrl = `${p.id > 0 ? `${baseUrl()}/?poi=${p.id}` : pointUrl(p)}&dir=${v.mode}&from=${S.origin.lat.toFixed(6)},${S.origin.lng.toFixed(6)}`;
+    return `<div class="pv"><div class="pv-head">${backBtn()}<div style="min-width:0"><h2 class="pv-title">${t('directions')}</h2><div class="pv-sub">${esc(p.name)}</div></div></div>
+      <div class="fromto"><div class="ft"><span class="dotA"></span><span><small>${t('from')}</small><b>${esc(S.origin.label)}</b></span></div>
+      <div class="ft"><span class="dotB"></span><span><small>${t('to')}</small><b>${esc(p.name)}</b></span></div></div>
+      <div class="modes" style="grid-template-columns:repeat(4,1fr)">${modes.map(([m, ic, lb]) => `<button class="mode${v.mode === m ? ' on' : ''}" data-act="mode" data-m="${m}">${icon(ic, 22)}${lb}</button>`).join('')}</div>
+      ${body}
+      <div class="qrbox" style="margin-top:6px"><div class="qr">${qrSVG(shareUrl, { size: 112 })}</div><div><b>${t('takeRoute')}</b><small>${t('takeRouteSub')}</small></div></div>
+      <div class="btn-row">${S.settings.ride?.grab ? `<button class="btn sec" data-act="ride" data-p="grab" data-id="${p.id}">${icon('moto', 20)} ${t('grab')}</button>` : ''}${S.settings.ride?.xanhsm ? `<button class="btn sec" data-act="ride" data-p="xanhsm" data-id="${p.id}">${icon('taxi', 20)} ${t('xanhsm')}</button>` : ''}</div>
+    </div>`;
+  },
+  transit(v) {
+    const near = S.transit.stops.map(s => [s, hav(S.origin, s)]).sort((a, b) => a[1] - b[1]).slice(0, 4);
+    return `<div class="pv"><div class="pv-head">${backBtn()}<div><h2 class="pv-title">${t('transit')}</h2><div class="pv-sub">${S.transit.lines.length} ${LANG === 'vi' ? 'tuyến' : 'lines'} · ${S.transit.stops.length} ${t('stopsCount')}</div></div></div>
+      <div class="sec" style="margin-top:0"><h3>${t('stationNear')}</h3></div>
+      <div class="list stops">${near.map(([s, d]) => stopItem(s, d)).join('')}</div>
+      <div class="sec"><h3>${t('lines')}</h3></div>
+      ${S.transit.lines.map(l => {
+      const stops = (l.stops || []).map(id => S.transit.stops.find(s => s.id === id)).filter(Boolean); return `<div class="line-card" style="--c:${esc(l.color)}">
+        <button class="line-head" data-act="line" data-id="${l.id}"><span class="stop-badge" style="--c:${esc(l.color)}">${esc(l.code)}</span><span><b>${esc(l.name)}</b><small>${stops.length} ${t('stopsCount')} · ${esc(l.operator || '')}</small></span></button>
+        <div class="stations">${stops.map(s => `<button class="station" data-act="stop" data-id="${s.id}"${v.focus === s.id ? ' style="font-weight:800;color:var(--navy)"' : ''}>${esc(s.name)}<small>${fmtDist(hav(S.origin, s))}</small></button>`).join('')}</div></div>`;
+    }).join('')}
+      <div class="note">${icon('info', 16)} ${LANG === 'vi' ? 'Toạ độ nhà ga đang được hiệu chỉnh theo thực địa. Tuyến xe buýt được cập nhật bởi quản trị viên.' : 'Station positions are being field-verified. Bus routes are maintained by administrators.'}</div></div>`;
+  },
+  wards(v) {
+    const q = v.q || '';
+    const list = S.wards.filter(w => !q || norm(w.name).includes(norm(q)));
+    return `<div class="pv"><div class="pv-head">${backBtn()}<div><h2 class="pv-title">${t('wardList')}</h2><div class="pv-sub">${S.wards.length} ${LANG === 'vi' ? 'đơn vị hành chính' : 'units'} · ${t('wardsSub')}</div></div></div>
+      <div class="list wlist">${list.map(w => `<button class="item${w.slug === S.selWard ? ' sel' : ''}" data-act="ward" data-slug="${w.slug}"><span class="th">${esc(initials(w.short))}</span><span class="ib"><b>${esc(w.name)}</b><span class="addr">${w.area_km2 ? String(w.area_km2).replace('.', ',') + ' km² · ' : ''}${w.poi_count} ${t('places').toLowerCase()}</span></span>${icon('chevron', 20)}</button>`).join('')}</div></div>`;
+  },
+  ward(v) {
+    const w = S.wardMap[v.slug]; if (!w) return VIEWS.wards({});
+    const list = S.pois.filter(p => p.ward_slug === w.slug);
+    const hq = list.find(p => p.category === 'hanh-chinh' && /UBND/.test(p.name));
+    return `<div class="pv"><div class="pv-head">${backBtn()}<div><h2 class="pv-title">${esc(w.name)}</h2><div class="pv-sub">${t('wardInfo')}</div></div></div>
+      <div class="kpis"><div class="kpi"><b>${w.area_km2 ? String(w.area_km2).replace('.', ',') : '—'}</b><small>${t('area')} (km²)</small></div><div class="kpi"><b>${list.length}</b><small>${t('poiCount')}</small></div><div class="kpi"><b>${fmtDist(hav(S.origin, { lat: w.hq?.[1] || 0, lng: w.hq?.[0] || 0 }))}</b><small>${t('hq')}</small></div></div>
+      ${hq ? poiItem(hq) : ''}
+      <div class="sec"><h3>${t('originalMap')}</h3></div>
+      <button class="ward-hero" data-act="scan" data-slug="${w.slug}"><img src="/assets/maps/${esc(w.slug)}.jpg" alt="${esc(w.name)}" loading="lazy"></button>
+      <div class="sec"><h3>${t('places')}</h3></div>
+      <div class="list">${list.filter(p => p !== hq).slice(0, 60).map(p => poiItem(p)).join('') || `<div class="empty">${t('noResult')}</div>`}</div></div>`;
+  },
+};
+const initials = (s) => String(s || '').split(/\s+/).map(x => x[0]).join('').slice(0, 3).toUpperCase();
+function stopItem(s, d) {
+  const line = S.transit.lines.find(l => (s.lines || []).includes(l.code));
+  return `<button class="item" data-act="stop" data-id="${s.id}"><span class="stop-badge" style="--c:${esc(line?.color || '#0E8FB0')}">${esc((s.lines || []).join(', ') || (s.kind === 'metro' ? 'M' : 'B'))}</span><span class="ib"><b>${esc(s.name)}</b><span class="addr">${esc(line?.name || '')}</span></span>${d != null ? `<span class="tag dist">${fmtDist(d)}</span>` : ''}</button>`;
+}
+// ---------------------------------------------------------------- tìm địa chỉ bất kỳ (OpenStreetMap: Photon / Nominatim)
+S.geoCache = {};
+let geoT = null;
+function geoResHTML(q) {
+  const items = S.geoCache[q];
+  if (!items) return `<div class="note">${icon('search', 16)} ${LANG === 'vi' ? 'Đang tìm địa chỉ…' : 'Searching addresses…'}</div>`;
+  if (!items.length) return `<div class="note">${LANG === 'vi' ? 'Không thấy địa chỉ phù hợp. Mẹo: chạm thẳng vào vị trí trên bản đồ để chỉ đường tới đó.' : 'No address found. Tip: tap the map to get directions there.'}</div>`;
+  return items.map((it, i) => { const d = S.origin ? hav(S.origin, it) : null; return `<button class="item" data-act="geo" data-i="${i}"><span class="th">${icon('pin', 24)}</span><span class="ib"><b>${hl(it.name, q)}</b><span class="meta">${it.ward_slug && S.wardMap[it.ward_slug] ? `<span class="tag">${esc(S.wardMap[it.ward_slug].short)}</span>` : ''}${d != null ? `<span class="tag dist">${fmtDist(d)}</span>` : ''}</span>${it.address ? `<span class="addr">${esc(it.address)}</span>` : ''}</span></button>`; }).join('');
+}
+function geoSearch(q) {
+  clearTimeout(geoT);
+  if (q.length < 3 || S.geoCache[q]) return;
+  geoT = setTimeout(async () => {
+    const o = S.origin || { lat: 21.0278, lng: 105.8342 };
+    try { const r = await api(`/api/public/geocode?q=${encodeURIComponent(q)}&lat=${o.lat.toFixed(4)}&lng=${o.lng.toFixed(4)}&lang=${LANG}`); S.geoCache[q] = r.items || []; }
+    catch (e) { S.geoCache[q] = []; }
+    const cur = S.stack[S.stack.length - 1]; const el = $('#geoRes');
+    if (el && cur?.v === 'search' && cur.q.trim() === q) el.innerHTML = geoResHTML(q);
+  }, 450);
+}
+const AFTER = {
+  search(v) { geoSearch(v.q.trim()); },
+  poi(v) { const p = S.poiMap[v.id]; if (!p) return; S.selPoi = p.id; renderMarkers(); },
+};
+
+// ---------------------------------------------------------------- chọn điểm bất kỳ trên bản đồ
+const OWN_SRC = ['wards', 'mask', 'route', 'transit', 'here-acc'];
+const POI_KIND_VI = { restaurant: 'Nhà hàng', cafe: 'Quán cà phê', fast_food: 'Đồ ăn nhanh', bar: 'Quán bar', school: 'Trường học', college: 'Trường cao đẳng', university: 'Trường đại học', kindergarten: 'Trường mầm non', hospital: 'Bệnh viện', clinic: 'Phòng khám', pharmacy: 'Nhà thuốc', doctors: 'Phòng khám', bank: 'Ngân hàng', atm: 'ATM', fuel: 'Trạm xăng', parking: 'Bãi đỗ xe', place_of_worship: 'Cơ sở tôn giáo', temple: 'Đền, chùa', museum: 'Bảo tàng', theatre: 'Nhà hát', cinema: 'Rạp chiếu phim', hotel: 'Khách sạn', attraction: 'Điểm tham quan', park: 'Công viên', marketplace: 'Chợ', supermarket: 'Siêu thị', convenience: 'Cửa hàng tiện lợi', shop: 'Cửa hàng', police: 'Công an', post: 'Bưu điện', post_office: 'Bưu điện', townhall: 'Cơ quan hành chính', library: 'Thư viện', stadium: 'Sân vận động', sports: 'Thể thao', bus: 'Điểm dừng xe buýt', railway: 'Nhà ga', monument: 'Tượng đài', memorial: 'Đài tưởng niệm', lodging: 'Nơi lưu trú', grocery: 'Tạp hoá', clothing_store: 'Cửa hàng quần áo', office: 'Văn phòng', embassy: 'Đại sứ quán' };
+function wardAt(lng, lat) {
+  const inRing = (ring) => { let c = false; for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) { const [xi, yi] = ring[i], [xj, yj] = ring[j]; if ((yi > lat) !== (yj > lat) && lng < (xj - xi) * (lat - yi) / (yj - yi) + xi) c = !c; } return c; };
+  const inPoly = (poly) => inRing(poly[0]) && !poly.slice(1).some(inRing);
+  const f = (S.wardGeo?.features || []).find(f => { const g = f.geometry; return g && (g.type === 'Polygon' ? inPoly(g.coordinates) : g.coordinates.some(inPoly)); });
+  return f?.properties.slug || null;
+}
+const pointUrl = (p) => `${baseUrl()}/?pt=${p.lat.toFixed(6)},${p.lng.toFixed(6)}&name=${encodeURIComponent(p.name || '')}`;
+function onMapClick(e) {
+  if (e.originalEvent?._mk) return;
+  if (osk && !$('#osk').hidden) { osk.hide(); $('#q').blur(); return; } // chạm bản đồ khi đang gõ: chỉ đóng bàn phím ảo
+  // Ưu tiên điểm có tên trên bản đồ nền (cửa hàng, trường học, bệnh viện… của OpenStreetMap)
+  const pad = MOBILE() ? 14 : 10, pt = e.point;
+  let feat = null;
+  try {
+    feat = map.queryRenderedFeatures([[pt.x - pad, pt.y - pad], [pt.x + pad, pt.y + pad]])
+      .find(f => !OWN_SRC.includes(f.source) && f.layer.type === 'symbol' && (f.properties['name:vi'] || f.properties.name) && f.geometry.type === 'Point' && /poi|aerodrome|station/.test(f.sourceLayer || f.layer.id));
+  } catch { }
+  if (feat) {
+    const pr = feat.properties, [lng, lat] = feat.geometry.coordinates;
+    const k = pr.subclass || pr.class || '';
+    pickAt({ lng, lat }, { name: pr['name:vi'] || pr.name, kind: LANG === 'vi' ? (POI_KIND_VI[k] || POI_KIND_VI[pr.class] || '') : String(k).replace(/_/g, ' ') });
+  } else pickAt(e.lngLat);
+}
+function roadNear(lngLat) {
+  try {
+    const pt = map.project(lngLat);
+    const f = map.queryRenderedFeatures([[pt.x - 40, pt.y - 40], [pt.x + 40, pt.y + 40]]).find(f => !OWN_SRC.includes(f.source) && /transportation_name|road/.test(f.sourceLayer || f.layer.id) && (f.properties['name:vi'] || f.properties.name));
+    return f ? (f.properties['name:vi'] || f.properties.name) : '';
+  } catch { return ''; }
+}
+let pickSeq = 0, pickMarker = null;
+function pickAt(ll, extra = {}) {
+  const lat = +(ll.lat), lng = +(ll.lng);
+  const id = -(900000000 + (++pickSeq));
+  const road = roadNear({ lng, lat });
+  const p = { id, picked: true, lat, lng, name: extra.name || '', kind: extra.kind || '', address: extra.address || road, category: '_pin', images: [], ward_slug: wardAt(lng, lat), loading: S.settings.geocode?.enabled !== false };
+  if (!p.name) p.name = road ? `${LANG === 'vi' ? 'Gần' : 'Near'} ${road}` : t('pinned');
+  S.poiMap[id] = p; S.detail[id] = p; S.lastPick = { lat, lng };
+  const cur = S.stack[S.stack.length - 1];
+  if (cur?.v === 'pick') S.stack.pop();
+  clearRoute(); S.selPoi = null;
+  go({ v: 'pick', id });
+  renderMarkers();
+  if (!map.getBounds().contains([lng, lat])) map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 16), padding: mapPadding(), duration: 700 });
+  track('pin_drop', { ward: p.ward_slug, data: { lat: +lat.toFixed(5), lng: +lng.toFixed(5), named: !!extra.name } });
+  const refresh = () => { const now = S.stack[S.stack.length - 1]; if (now?.v === 'pick' && now.id === id) render(); };
+  if (p.loading) {
+    api(`/api/public/reverse?lat=${lat.toFixed(6)}&lng=${lng.toFixed(6)}&lang=${LANG}`).then(r => {
+      p.loading = false;
+      if (r.address && !extra.address) p.address = r.address;
+      if (!extra.name && r.name) p.name = r.name;
+      else if (!extra.name && !road && r.road) p.name = `${LANG === 'vi' ? 'Gần' : 'Near'} ${r.road}`;
+      if (r.ward_slug) p.ward_slug = r.ward_slug;
+      refresh();
+    }).catch(() => { p.loading = false; refresh(); });
+  }
+  nearestTransit(p).then(nt => { p.nearT = nt; const el = $('#pickT'); if (el && S.stack[S.stack.length - 1]?.id === id) el.innerHTML = nearbyHTML(nt); }).catch(() => { });
+  return id;
+}
+function syncPickMarker(v) {
+  const p = v && (v.v === 'pick' || v.v === 'route') ? S.poiMap[v.id] : null;
+  if (!p?.picked) { pickMarker?.remove(); pickMarker = null; return; }
+  if (!pickMarker) {
+    const el = document.createElement('div'); el.className = 'mk-pick';
+    el.innerHTML = `<span class="pulse"></span><svg viewBox="0 0 40 48" width="44" height="53"><path d="M20 47s15-13.4 15-26.5C35 11.4 28.3 4 20 4S5 11.4 5 20.5C5 33.6 20 47 20 47z" fill="#0FA968" stroke="#fff" stroke-width="3"/><circle cx="20" cy="20" r="6" fill="#fff"/></svg>`;
+    el.addEventListener('click', (e) => { e.stopPropagation(); e._mk = true; });
+    pickMarker = new maplibregl.Marker({ element: el, anchor: 'bottom' });
+  }
+  pickMarker.setLngLat([p.lng, p.lat]).addTo(map);
+  pickMarker.getElement().style.display = v.v === 'route' ? 'none' : '';
+}
+
+// ---------------------------------------------------------------- actions
+async function openPoi(id, opts = {}) {
+  S.selPoi = id; clearRoute();
+  const cur = S.stack[S.stack.length - 1];
+  if (cur?.v === 'poi') S.stack.pop();
+  go({ v: 'poi', id });
+  const p = S.poiMap[id];
+  if (p) { map.flyTo({ center: [p.lng, p.lat], zoom: Math.max(map.getZoom(), 16), padding: mapPadding(), duration: 800 }); }
+  try {
+    const d = await api(`/api/public/pois/${id}`);
+    S.detail[id] = d; S.poiMap[id] = S.poiMap[id] || d;
+    if (!p) map.flyTo({ center: [d.lng, d.lat], zoom: 16, padding: mapPadding() });
+    const now = S.stack[S.stack.length - 1]; if (now.v === 'poi' && now.id === id) render();
+    track('poi_view', { poi_id: id, ward: d.ward_slug });
+    if (opts.dir) startRoute(id, opts.dir);
+  } catch (e) { toast(esc(e.message)); }
+}
+function clearRoute() {
+  S.route = null;
+  if (map?.getSource('route')) map.getSource('route').setData(emptyFC());
+  endMarker?.remove(); endMarker = null; planMarkers.forEach(m => m.remove()); planMarkers = [];
+}
+async function startRoute(id, mode = 'foot') {
+  const p = S.detail[id] || S.poiMap[id]; if (!p) return;
+  S.route = null;
+  const cur = S.stack[S.stack.length - 1];
+  if (cur?.v === 'route') { cur.mode = mode; render(); } else go({ v: 'route', id, mode });
+  track('route_request', { poi_id: id, mode });
+  endMarker?.remove(); planMarkers.forEach(m => m.remove()); planMarkers = [];
+  map.getSource('route')?.setData(emptyFC());
+  if (mode !== 'transit' && !p.isStop) {
+    const ok = `${S.origin.lat},${S.origin.lng}`;
+    if (S.nearTKey !== ok) { S.nearTKey = ok; S.nearT = null; nearestTransit(S.origin).then(nt => { if (S.nearTKey !== ok) return; S.nearT = nt; const el = $('#nearT'); if (el) { el.innerHTML = nearbyHTML(nt); } }); }
+  }
+  const el = document.createElement('div'); el.className = 'mk-end'; el.innerHTML = icon('flag', 18);
+  endMarker = new maplibregl.Marker({ element: el }).setLngLat([p.lng, p.lat]).addTo(map);
+  renderMarkers();
+  let r;
+  if (mode === 'transit') r = await planTransit(p);
+  else {
+    try { r = await api(`/api/public/route?mode=${mode}&lang=${LANG}&from=${S.origin.lng},${S.origin.lat}&to=${p.lng},${p.lat}`); }
+    catch (e) { toast(esc(e.message)); return; }
+    r.features = [{ type: 'Feature', properties: { kind: mode === 'foot' ? 'walk' : 'ride', color: mode === 'foot' ? '#2A62B8' : mode === 'bike' ? '#17A673' : '#14346F' }, geometry: r.geometry }];
+  }
+  const now = S.stack[S.stack.length - 1]; if (now.v !== 'route' || now.id !== id || now.mode !== mode) return;
+  r.mode = mode; S.route = r;
+  map.getSource('route').setData({ type: 'FeatureCollection', features: r.features });
+  const b = new maplibregl.LngLatBounds(); r.features.forEach(f => f.geometry.coordinates.forEach(c => b.extend(c))); b.extend([S.origin.lng, S.origin.lat]);
+  map.fitBounds(b, { padding: mapPadding(), maxZoom: 17, duration: 800 });
+  render();
+}
+// ---------------------------------------------------------------- Xe buýt (dữ liệu mở OpenStreetMap qua Overpass) + Metro
+const OVERPASS_URLS = () => S.settings.transit?.overpass || ['https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter'];
+const busCache = {};
+async function overpass(q) {
+  let last;
+  for (const url of OVERPASS_URLS()) {
+    try {
+      const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), 14000);
+      const r = await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal: ctl.signal });
+      clearTimeout(tm); if (!r.ok) throw new Error('HTTP ' + r.status); return await r.json();
+    } catch (e) { last = e; }
+  }
+  throw last || new Error('overpass');
+}
+async function busData(pts, R) {
+  const key = pts.map(p => p.lat.toFixed(4) + ',' + p.lng.toFixed(4)).join('|') + '@' + R;
+  if (busCache[key]) return busCache[key];
+  const sets = pts.map((p, i) => `(node(around:${R},${p.lat},${p.lng})[highway=bus_stop];node(around:${R},${p.lat},${p.lng})[public_transport=platform][bus=yes];)->.s${i};`).join('');
+  const q = `[out:json][timeout:20];${sets}(${pts.map((p, i) => `.s${i};`).join('')})->.all;.all out body;rel(bn.all)[route=bus];out body;`;
+  const d = await overpass(q);
+  const stops = [], rels = [];
+  d.elements.forEach(e => { if (e.type === 'node') stops.push({ id: e.id, kind: 'bus', name: e.tags?.name || (LANG === 'vi' ? 'Điểm dừng xe buýt' : 'Bus stop'), lat: e.lat, lng: e.lon, lines: [] }); else if (e.type === 'relation') rels.push(e); });
+  const byId = Object.fromEntries(stops.map(x => [x.id, x]));
+  rels.forEach(r => { const ref = r.tags?.ref || r.tags?.name || '?'; r.members.forEach(m => { const st = m.type === 'node' && byId[m.ref]; if (st && !st.lines.includes(ref)) st.lines.push(ref); }); });
+  stops.forEach(x => x.lines.sort((a, b) => a.localeCompare(b, 'vi', { numeric: true })));
+  return (busCache[key] = { stops, rels, byId });
+}
+function dedupeStops(list) { // cùng một bến thường có 2 điểm (bus_stop + platform)
+  const out = [];
+  list.forEach(([st, d]) => { const dup = out.find(([o]) => hav(o, st) < 40 && (o.name === st.name || !st.lines.length)); if (dup) { st.lines.forEach(l => !dup[0].lines.includes(l) && dup[0].lines.push(l)); } else out.push([st, d]); });
+  return out;
+}
+async function nearestTransit(pt) {
+  let bus = [];
+  try { const d = await busData([pt], 700); bus = dedupeStops(d.stops.map(x => [x, hav(pt, x)]).sort((a, b) => a[1] - b[1])).slice(0, 3); } catch (e) { bus = null; }
+  const metro = S.transit.stops.map(x => [x, hav(pt, x)]).filter(x => x[1] < 2500).sort((a, b) => a[1] - b[1]).slice(0, 2);
+  return { bus, metro };
+}
+async function planTransit(p) {
+  const o = S.origin, R = S.settings.transit?.walk_radius_m || 900, walk = 1.25, opts = [];
+  // Metro (dữ liệu nội bộ)
+  const nearM = (pt) => S.transit.stops.map(x => [x, hav(pt, x)]).filter(x => x[1] <= Math.max(R, 1200));
+  for (const [sa, da] of nearM(o)) for (const [sb, db] of nearM(p)) {
+    if (sa.id === sb.id) continue;
+    for (const l of S.transit.lines) {
+      const ia = (l.stops || []).indexOf(sa.id), ib = (l.stops || []).indexOf(sb.id); if (ia < 0 || ib < 0) continue;
+      const n = Math.abs(ia - ib), time = (da + db) / walk + n * 130 + 300;
+      const ids = l.stops.slice(Math.min(ia, ib), Math.max(ia, ib) + 1); if (ia > ib) ids.reverse();
+      opts.push({ kind: 'metro', ref: l.code, name: l.name, color: l.color, sa, sb, da, db, n, time, path: ids.map(id => S.transit.stops.find(x => x.id === id)).map(x => [x.lng, x.lat]) });
+    }
+  }
+  // Xe buýt (OpenStreetMap)
+  let busErr = null, nearA = [], nearB = [];
+  try {
+    const d = await busData([o, p], R);
+    const A = new Map(d.stops.filter(x => hav(o, x) <= R).map(x => [x.id, x])), B = new Map(d.stops.filter(x => hav(p, x) <= R).map(x => [x.id, x]));
+    nearA = dedupeStops([...A.values()].map(x => [x, hav(o, x)]).sort((a, b) => a[1] - b[1])).slice(0, 3);
+    nearB = dedupeStops([...B.values()].map(x => [x, hav(p, x)]).sort((a, b) => a[1] - b[1])).slice(0, 3);
+    for (const r of d.rels) {
+      const mem = r.members.filter(m => m.type === 'node').map(m => ({ ref: m.ref, role: m.role || '' }));
+      let best = null;
+      for (let i = 0; i < mem.length; i++) {
+        const sa = A.get(mem[i].ref); if (!sa) continue;
+        for (let j = i + 1; j < mem.length; j++) {
+          const sb = B.get(mem[j].ref); if (!sb) continue;
+          const da = hav(o, sa), db = hav(p, sb), ride = hav(sa, sb) * 1.35;
+          const time = (da + db) / walk + ride / (16 / 3.6) + 420;
+          if (!best || time < best.time) {
+            const seg = mem.slice(i, j + 1); const plat = seg.filter(m => /platform/.test(m.role)); const stp = seg.filter(m => /stop/.test(m.role));
+            const n = Math.max(1, (plat.length || stp.length || seg.length) - 1);
+            best = { kind: 'bus', ref: r.tags?.ref || '?', name: r.tags?.name || '', color: r.tags?.colour || '#E08A1E', rel: r.id, sa, sb, da, db, n, time, segIds: seg.map(m => m.ref) };
+          }
+        }
+      }
+      if (best) opts.push(best);
+    }
+  } catch (e) { busErr = e; }
+  // gộp theo tuyến, xếp theo thời gian
+  const seen = new Set(); const list = opts.sort((a, b) => a.time - b.time).filter(x => { const k = x.kind + x.ref; if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 5);
+  const walkDirect = hav(o, p) / walk;
+  const res = { options: list, busErr, nearA, nearB, walkFaster: list[0] && walkDirect < list[0].time, sel: 0 };
+  if (list.length) await drawTransitOption(res, 0, p, true);
+  else res.features = [{ type: 'Feature', properties: { kind: 'walk', color: '#8A97AD' }, geometry: { type: 'LineString', coordinates: [[o.lng, o.lat], [p.lng, p.lat]] } }];
+  return res;
+}
+async function footPath(a, b) {
+  try { const r = await api(`/api/public/route?mode=foot&lang=${LANG}&from=${a.lng},${a.lat}&to=${b.lng},${b.lat}`); return r.geometry; }
+  catch { return { type: 'LineString', coordinates: [[a.lng, a.lat], [b.lng, b.lat]] }; }
+}
+async function drawTransitOption(res, k, p, silent) {
+  const x = res.options[k]; if (!x) return; res.sel = k; const o = S.origin;
+  let path = x.path;
+  if (x.kind === 'bus') {
+    try {
+      const ids = x.segIds.slice(0, 120);
+      const d = await overpass(`[out:json][timeout:20];rel(${x.rel})->.r;.r out body;way(r.r);out geom;node(id:${ids.join(',')});out skel;`);
+      const pos = {}, ways = {}; let rel = null;
+      d.elements.forEach(e => { if (e.type === 'node') pos[e.id] = [e.lon, e.lat]; else if (e.type === 'way' && e.geometry) ways[e.id] = e.geometry.map(g => [g.lon, g.lat]); else if (e.type === 'relation') rel = e; });
+      const stopsPath = ids.map(id => pos[id]).filter(Boolean);
+      path = busShape(rel, ways, x.sa, x.sb, stopsPath) || stopsPath;
+    } catch { path = null; }
+    if (!path || path.length < 2) path = [[x.sa.lng, x.sa.lat], [x.sb.lng, x.sb.lat]];
+  }
+  const [w1, w2] = await Promise.all([footPath(o, x.sa), footPath(x.sb, p)]);
+  res.features = [
+    { type: 'Feature', properties: { kind: 'walk', color: '#2A62B8' }, geometry: w1 },
+    { type: 'Feature', properties: { kind: x.kind, color: x.color }, geometry: { type: 'LineString', coordinates: path } },
+    { type: 'Feature', properties: { kind: 'walk', color: '#2A62B8' }, geometry: w2 },
+  ];
+  res.duration = x.time; res.distance = x.da + x.db;
+  planMarkers.forEach(m => m.remove()); planMarkers = [];
+  [[x.sa, x.kind === 'metro' ? 'M' : 'B'], [x.sb, x.kind === 'metro' ? 'M' : 'B']].forEach(([st, l]) => {
+    const el = document.createElement('div'); el.className = 'mk-stop big'; el.style.setProperty('--c', x.color); el.textContent = l;
+    planMarkers.push(new maplibregl.Marker({ element: el }).setLngLat([st.lng, st.lat]).addTo(map));
+  });
+  if (!silent) {
+    map.getSource('route').setData({ type: 'FeatureCollection', features: res.features });
+    const b = new maplibregl.LngLatBounds(); res.features.forEach(f => f.geometry.coordinates.forEach(c => b.extend(c)));
+    map.fitBounds(b, { padding: mapPadding(), maxZoom: 17, duration: 700 }); render();
+  }
+}
+// Nối các đoạn đường (way) của tuyến buýt theo thứ tự trong relation OSM rồi cắt đúng đoạn giữa 2 bến
+function busShape(rel, ways, sa, sb, stopsPath) {
+  if (!rel) return null;
+  const segs = rel.members.filter(m => m.type === 'way' && ways[m.ref] && !/platform|stop/.test(m.role || '')).map(m => ways[m.ref]);
+  if (!segs.length) return null;
+  const d2 = (a, b) => hav({ lng: a[0], lat: a[1] }, { lng: b[0], lat: b[1] });
+  let line = segs[0].slice();
+  if (segs[1]) { const n = segs[1], e0 = Math.min(d2(line[0], n[0]), d2(line[0], n[n.length - 1])), e1 = Math.min(d2(line[line.length - 1], n[0]), d2(line[line.length - 1], n[n.length - 1])); if (e0 < e1) line.reverse(); }
+  for (const w of segs.slice(1)) {
+    const end = line[line.length - 1];
+    const seg = d2(end, w[0]) <= d2(end, w[w.length - 1]) ? w : w.slice().reverse();
+    line = line.concat(d2(end, seg[0]) < 1 ? seg.slice(1) : seg);
+  }
+  const near = (pt, from = 0) => { let bi = -1, bd = Infinity; for (let i = from; i < line.length; i++) { const d = d2(line[i], [pt.lng, pt.lat]); if (d < bd) { bd = d; bi = i; } } return [bi, bd]; };
+  const [ia, da] = near(sa); const [ib, db] = near(sb, ia + 1);
+  if (ia < 0 || ib < 0 || da > 150 || db > 150) return null;
+  const cut = line.slice(ia, ib + 1);
+  let len = 0; for (let i = 1; i < cut.length; i++) len += d2(cut[i - 1], cut[i]);
+  let ref = 0; for (let i = 1; i < stopsPath.length; i++) ref += d2(stopsPath[i - 1], stopsPath[i]);
+  return cut.length > 1 && (!ref || len < ref * 3 + 500) ? cut : null;
+}
+let planMarkers = [];
+function routeToStop(st) {
+  const id = -Math.abs(Number(String(st.id).replace(/\D/g, '').slice(-9)) || Date.now() % 1e9);
+  S.poiMap[id] = { id, isStop: true, name: st.name, lat: st.lat, lng: st.lng, category: 'giao-thong', address: (st.lines || []).length ? `${t('lines')}: ${st.lines.join(', ')}` : '', images: [] };
+  S.detail[id] = S.poiMap[id];
+  startRoute(id, 'foot');
+}
+S.stopRefs = {};
+function stopRow(st, d) {
+  const isM = st.kind === 'metro'; const line = isM ? S.transit.lines.find(l => (st.lines || []).includes(l.code)) : null;
+  S.stopRefs[st.id] = st;
+  return `<div class="item" style="cursor:default"><span class="stop-badge" style="--c:${esc(line?.color || '#E08A1E')}">${isM ? 'M' : 'B'}</span><span class="ib"><b>${esc(st.name)}</b><span class="addr">${(st.lines || []).length ? `${isM ? 'Metro' : (LANG === 'vi' ? 'Tuyến' : 'Routes')} ${esc(st.lines.slice(0, 8).join(', '))}${st.lines.length > 8 ? '…' : ''}` : (LANG === 'vi' ? 'Chưa có dữ liệu tuyến' : 'No route data')}</span></span>
+    <span style="display:flex;flex-direction:column;align-items:flex-end;gap:6px"><span class="tag dist">${fmtDist(d)}</span><button class="btn sec" style="height:34px;padding:0 10px;font-size:.78rem" data-act="gostop" data-sid="${esc(String(st.id))}">${icon('walk', 16)} ${LANG === 'vi' ? 'Dẫn tới bến' : 'Walk here'}</button></span></div>`;
+}
+function nearbyHTML(nt) {
+  if (!nt) return `<div class="note">${icon('clock', 16)} ${LANG === 'vi' ? 'Đang tìm bến xe buýt & ga metro gần nhất…' : 'Finding nearest stops…'}</div>`;
+  const rows = [...(nt.metro || []), ...(nt.bus || [])].sort((a, b) => a[1] - b[1]);
+  if (!rows.length) return `<div class="note">${nt.bus === null ? (LANG === 'vi' ? 'Không tải được dữ liệu xe buýt (cần Internet).' : 'Bus data unavailable.') : (LANG === 'vi' ? 'Không có bến trong bán kính đi bộ.' : 'No stops within walking distance.')}</div>`;
+  return `<div class="list stops">${rows.map(([st, d]) => stopRow(st, d)).join('')}</div>`;
+}
+function transitPlanHTML(r, p) {
+  const gUrl = (S.settings.transit?.google_url || 'https://www.google.com/maps/dir/?api=1&origin={from_lat},{from_lng}&destination={lat},{lng}&travelmode=transit')
+    .replace('{from_lat}', S.origin.lat.toFixed(6)).replace('{from_lng}', S.origin.lng.toFixed(6)).replace('{lat}', p.lat.toFixed(6)).replace('{lng}', p.lng.toFixed(6));
+  const busQR = `<div class="qrbox" style="margin:14px 0"><div class="qr">${qrSVG(gUrl, { size: 112 })}</div><div><b>${t('moreBus')}</b><small>${LANG === 'vi' ? 'Mở gợi ý xe buýt theo thời gian thực trên điện thoại.' : 'Open real-time bus suggestions on your phone.'}</small></div></div>`;
+  const near = (list, title) => list?.length ? `<div class="sec"><h3>${title}</h3></div><div class="list stops">${list.map(([st, d]) => stopRow(st, d)).join('')}</div>` : '';
+  const nearAll = near(r.nearA, LANG === 'vi' ? 'Bến xe buýt gần điểm xuất phát' : 'Bus stops near start') + near(r.nearB, LANG === 'vi' ? 'Bến xe buýt gần điểm đến' : 'Bus stops near destination');
+  if (!r.options.length) return `<div class="note">${r.busErr ? (LANG === 'vi' ? 'Không tải được dữ liệu tuyến xe buýt (cần Internet).' : 'Could not load bus data.') : t('noPlan')}</div>${nearAll}${busQR}`;
+  const b = r.options[r.sel]; const [n, u] = fmtDur(r.duration || b.time);
+  const lbl = (x) => x.kind === 'metro' ? `Metro ${esc(x.ref)}` : `${LANG === 'vi' ? 'Buýt' : 'Bus'} ${esc(x.ref)}`;
+  return `<div class="summary"><span class="big">${n}</span><span class="unit">${u}</span><span class="dist">${lbl(b)}</span></div>
+    ${r.walkFaster ? `<div class="note">${icon('walk', 16)} ${LANG === 'vi' ? 'Đi bộ trực tiếp có thể nhanh hơn với quãng đường này.' : 'Walking directly may be faster.'}</div>` : ''}
+    <div class="plan" style="--c:${esc(b.color)}">
+      <div class="leg"><span class="li">${icon('walk')}</span><span style="flex:1"><b>${t('walkTo')} ${esc(b.sa.name)}</b><small>${fmtDist(b.da)} · ~${Math.max(1, Math.round(b.da / 75))} ${t('min')}</small></span><button class="btn sec" style="height:34px;padding:0 10px;font-size:.78rem" data-act="gostop" data-sid="${esc(String(b.sa.id))}">${icon('route', 16)}</button></div>
+      <div class="leg"><span class="li metro">${icon(b.kind === 'metro' ? 'metro' : 'bus')}</span><span><b>${lbl(b)}${b.name ? ' · ' + esc(b.name) : ''}</b><small>${LANG === 'vi' ? 'Lên tại' : 'Board at'} ${esc(b.sa.name)} · ${b.n} ${t('stopsCount')} · ${LANG === 'vi' ? 'xuống tại' : 'alight at'} ${esc(b.sb.name)}</small></span></div>
+      <div class="leg"><span class="li">${icon('flag')}</span><span><b>${t('walk')} ${fmtDist(b.db)} ${t('to').toLowerCase()} ${esc(p.name)}</b><small>~${Math.max(1, Math.round(b.db / 75))} ${t('min')}</small></span></div>
+    </div>
+    ${r.options.length > 1 ? `<div class="sec"><h3>${LANG === 'vi' ? 'Các phương án khác' : 'Other options'}</h3></div><div class="chips" style="flex-wrap:wrap">${r.options.map((x, k) => `<button class="chip${k === r.sel ? ' on' : ''}" data-act="topt" data-k="${k}"><span class="dotc" style="width:10px;height:10px;border-radius:50%;background:${esc(x.color)}"></span>${lbl(x)} · ${Math.round(x.time / 60)}′</button>`).join('')}</div>` : ''}
+    ${nearAll}${busQR}
+    <p class="note">${LANG === 'vi' ? 'Tuyến xe buýt lấy từ dữ liệu mở OpenStreetMap; thời gian là ước tính.' : 'Bus routes from OpenStreetMap open data; times are estimates.'}</p>`;
+}
+const goPageUrl = (provider, p) => `${baseUrl()}/go/${provider}?lat=${p.lat.toFixed(6)}&lng=${p.lng.toFixed(6)}&name=${encodeURIComponent(p.name)}&addr=${encodeURIComponent(p.address || '')}`;
+// Grab: dùng link OneLink (https) → camera điện thoại mở thẳng ứng dụng Grab đã cài, điểm đến điền sẵn.
+// Xanh SM: chưa công bố deep link điền điểm đến → qua trang trung gian mở ứng dụng + sao chép địa chỉ.
+function rideLink(provider, p) {
+  const c = S.settings.ride?.[provider] || {};
+  const f = (tpl) => String(tpl || '').split('{lat}').join(p.lat.toFixed(6)).split('{lng}').join(p.lng.toFixed(6)).split('{name}').join(encodeURIComponent(p.name)).split('{addr}').join(encodeURIComponent(p.address || p.name));
+  if (c.onelink && c.app_url) return c.onelink.split('{deeplink}').join(encodeURIComponent(f(c.app_url)));
+  return goPageUrl(provider, p);
+}
+function rideModal(provider, id) {
+  const p = S.detail[id] || S.poiMap[id]; const cfg = S.settings.ride?.[provider]; if (!p || !cfg) return;
+  const url = rideLink(provider, p);
+  track('ride_click', { poi_id: id, provider });
+  if (!KIOSK && MOBILE()) { window.open(url, '_blank'); return; }
+  modal(`<div class="mh"><h3>${t('rideTitle')} ${esc(p.name)}</h3><button class="round" data-close>${icon('close')}</button></div>
+    <div class="mb"><div class="ride-qr"><div class="qr">${qrSVG(url, { size: 220 })}</div><div>
+      <div class="ride-logo" style="color:${provider === 'grab' ? '#00B14F' : '#0DA9A2'}">${icon(provider === 'grab' ? 'moto' : 'taxi', 28)} ${esc(cfg.name)}</div>
+      <ol class="ride-steps"><li>${t('rideStep1')}</li><li>${t(cfg.onelink ? 'rideStep2' : 'rideStep2x')}</li><li>${t('rideStep3')}</li></ol>
+      ${cfg.hotline ? `<p class="note">Hotline ${esc(cfg.name)}: <b>${esc(cfg.hotline)}</b></p>` : ''}</div></div></div>`);
+}
+function shareModal(id) {
+  const p = S.detail[id] || S.poiMap[id];
+  modal(`<div class="mh"><h3>${t('scanShare')}</h3><button class="round" data-close>${icon('close')}</button></div>
+  <div class="mb"><div class="ride-qr"><div class="qr">${qrSVG(id > 0 ? `${baseUrl()}/?poi=${id}` : pointUrl(p), { size: 220 })}</div><div><b style="font-size:1.1rem;color:var(--navy)">${esc(p.name)}</b><p class="note">${t('scanShareSub')}</p></div></div></div>`);
+}
+let vrInstance = null;
+async function openVR(id) {
+  let p = S.detail[id]; if (!p) { p = await api(`/api/public/pois/${id}`); S.detail[id] = p; }
+  const v = p.vr360; if (!v) return;
+  track('vr_open', { poi_id: id, type: v.type });
+  modal(`<div class="mh"><h3>${icon('vr', 22)} ${esc(p.name)} · 360°</h3><button class="round" data-close>${icon('close')}</button></div>
+    <div class="vr-frame" id="vrFrame">${v.type === 'embed' ? `<iframe src="${esc(embedUrl(v.url))}" allow="xr-spatial-tracking; gyroscope; accelerometer; fullscreen; autoplay" allowfullscreen></iframe>` : ''}
+    ${v.type !== 'embed' ? `<div class="vr-tools"><button class="round" data-vz="1">${icon('plus')}</button><button class="round" data-vz="-1">${icon('minus')}</button></div>` : ''}</div>`, { wide: true, onClose: () => { vrInstance?.destroy(); vrInstance = null; } });
+  if (v.type !== 'embed') {
+    const holder = document.createElement('div'); $('#vrFrame').prepend(holder);
+    vrInstance = new VRViewer(holder, { scenes: v.scenes });
+    if (v.scenes?.length) vrInstance.showScene(v.scenes[0].id); else vrInstance.load(v.url, v.type === 'video' ? 'video' : 'pano', v.yaw || 0).catch(() => { });
+    $$('[data-vz]').forEach(b => b.onclick = () => vrInstance.zoom(+b.dataset.vz));
+  }
+}
+function openModule(key) {
+  const m = (S.boot.modules || []).find(x => x.key === key); if (!m) return;
+  track('module_open', { module: key });
+  const ctx = { device: DEVICE, ward: S.selWard || '', lang: LANG, lat: S.origin?.lat, lng: S.origin?.lng };
+  if (m.kind === 'link') {
+    if (!KIOSK) { window.open(m.entry_url, '_blank'); return; }
+    modal(`<div class="mh"><h3>${esc(m.name)}</h3><button class="round" data-close>${icon('close')}</button></div><div class="mb"><div class="ride-qr"><div class="qr">${qrSVG(m.entry_url, { size: 200 })}</div><div><b style="color:var(--navy)">${esc(m.name)}</b><p class="note">${esc(m.description || '')}</p><p class="note">${t('scanShareSub')}</p></div></div></div>`);
+    return;
+  }
+  if (!m.entry_url) { toast(LANG === 'vi' ? 'Module đang được phát triển' : 'Coming soon'); return; }
+  const src = m.entry_url + (m.entry_url.includes('?') ? '&' : '?') + new URLSearchParams(ctx).toString();
+  modal(`<div class="mh"><h3>${icon(m.icon || 'grid', 22)} ${esc(m.name)}</h3><button class="round" data-close>${icon('close')}</button></div><iframe class="module-frame" id="modFrame" src="${esc(src)}"></iframe>`, { wide: true });
+  $('#modFrame').addEventListener('load', () => { $('#modFrame').contentWindow.postMessage({ type: 'x24:context', ...ctx, app: 'xanh24-maps', module: key }, '*'); });
+}
+// Cổng giao tiếp module ↔ ứng dụng (postMessage)
+window.addEventListener('message', (e) => {
+  const d = e.data || {}; if (typeof d !== 'object' || !String(d.type || '').startsWith('x24:')) return;
+  if (d.type === 'x24:close') closeModal();
+  if (d.type === 'x24:openPoi' && d.id) { closeModal(); openPoi(+d.id); }
+  if (d.type === 'x24:route' && d.id) { closeModal(); openPoi(+d.id, { dir: d.mode || 'foot' }); }
+  if (d.type === 'x24:track') track('module_event', { module: d.module, ...(d.data || {}) });
+  if (d.type === 'x24:toast') toast(esc(d.text || ''));
+});
+function openWard(slug, { fly = true } = {}) {
+  S.selWard = slug; S.scope = S.device?.ward_slug === slug ? 'ward' : S.scope;
+  applyWardSel(fly); updateTitle();
+  const cur = S.stack[S.stack.length - 1]; if (cur?.v === 'ward') S.stack.pop();
+  go({ v: 'ward', slug });
+  track('ward_view', { ward: slug });
+}
+function scanModal(slug) {
+  const w = S.wardMap[slug];
+  modal(`<div class="mh"><h3>${t('originalMap')} · ${esc(w.name)}</h3><button class="round" data-close>${icon('close')}</button></div><div style="flex:1;overflow:auto;background:#F3F6FA"><img src="/assets/maps/${esc(slug)}.jpg" alt="${esc(w.name)}" style="width:100%;height:auto"></div>`, { wide: true });
+}
+
+// ---------------------------------------------------------------- modal
+let modalOpts = {};
+function modal(html, opts = {}) {
+  modalOpts.onClose?.(); modalOpts = opts;
+  const card = $('#modalCard'); card.className = 'modal-card' + (opts.wide ? ' wide' : ''); card.innerHTML = html; $('#modal').hidden = false;
+}
+function closeModal() { $('#modal').hidden = true; $('#modalCard').innerHTML = ''; modalOpts.onClose?.(); modalOpts = {}; }
+$('#modal').addEventListener('click', (e) => { if (e.target.closest('[data-close]')) closeModal(); });
+
+// ---------------------------------------------------------------- UI wiring
+function initUI() {
+  $('#panelBody').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-act]'); if (!b) return;
+    const a = b.dataset.act, id = +b.dataset.id;
+    if (osk && !$('#osk').hidden) { osk.hide(); $('#q').blur(); }
+    if (a === 'back') back();
+    else if (a === 'poi') openPoi(id);
+    else if (a === 'cat') { S.catFilter = b.dataset.id; go({ v: 'list', cat: b.dataset.id }); renderMarkers(); track('category_open', { category: b.dataset.id }); }
+    else if (a === 'near') { S.catFilter = null; go({ v: 'list', near: true }); map.flyTo({ center: [S.origin.lng, S.origin.lat], zoom: 15, padding: mapPadding() }); }
+    else if (a === 'scope') { S.scope = b.dataset.s; applyWardSel(S.scope === 'ward'); render(); }
+    else if (a === 'route') startRoute(id, 'foot');
+    else if (a === 'mode') { const v = S.stack[S.stack.length - 1]; startRoute(v.id, b.dataset.m); }
+    else if (a === 'ride') rideModal(b.dataset.p, id);
+    else if (a === 'share') shareModal(id);
+    else if (a === 'vr') openVR(id);
+    else if (a === 'module') openModule(b.dataset.key);
+    else if (a === 'transit') { go({ v: 'transit' }); S.showMetro = true; applyOverlays(); const bb = new maplibregl.LngLatBounds(); S.transit.stops.forEach(s => bb.extend([s.lng, s.lat])); if (!bb.isEmpty()) map.fitBounds(bb, { padding: mapPadding(), duration: 700 }); }
+    else if (a === 'wards') go({ v: 'wards' });
+    else if (a === 'pinward') openWard(b.dataset.slug);
+    else if (a === 'geo') { const cur = S.stack[S.stack.length - 1]; const it = (S.geoCache[cur?.q?.trim()] || [])[+b.dataset.i]; if (it) { const id = pickAt({ lat: it.lat, lng: it.lng }, { name: it.name, address: it.address, kind: it.kind }); map.flyTo({ center: [it.lng, it.lat], zoom: Math.max(map.getZoom(), 16), padding: mapPadding(), duration: 700 }); track('geo_search_pick', { data: { q: cur.q.slice(0, 60) } }); } }
+    else if (a === 'ward') openWard(b.dataset.slug);
+    else if (a === 'scan') scanModal(b.dataset.slug);
+    else if (a === 'stop') { const s = S.transit.stops.find(x => x.id === id); if (s) map.flyTo({ center: [s.lng, s.lat], zoom: 16, padding: mapPadding() }); }
+    else if (a === 'line') { const l = S.transit.lines.find(x => x.id === id); if (l?.geometry) fitGeom(l.geometry); }
+    else if (a === 'topt') { drawTransitOption(S.route, +b.dataset.k, S.detail[S.stack[S.stack.length - 1].id] || S.poiMap[S.stack[S.stack.length - 1].id]); }
+    else if (a === 'gostop') { const st = S.stopRefs[b.dataset.sid] || S.route?.options?.flatMap(o => [o.sa, o.sb]).find(x => String(x.id) === b.dataset.sid); if (st) routeToStop(st); }
+    else if (a === 'step') { const s = S.route?.steps?.[+b.dataset.i]; if (s?.location) map.flyTo({ center: s.location, zoom: 17.5, padding: mapPadding() }); }
+  });
+  // search
+  const q = $('#q'); let qt;
+  q.addEventListener('input', () => {
+    $('#qClear').hidden = !q.value; clearTimeout(qt);
+    qt = setTimeout(() => {
+      const val = q.value.trim(); const cur = S.stack[S.stack.length - 1];
+      if (!val) { if (cur?.v === 'search') back(); return; }
+      if (cur?.v === 'search') { cur.q = val; render(); } else go({ v: 'search', q: val });
+      track('search', { q: val.slice(0, 60) });
+    }, 160);
+  });
+  $('#qClear').innerHTML = icon('close', 20);
+  $('#qClear').addEventListener('click', () => { q.value = ''; q.dispatchEvent(new Event('input')); q.focus(); });
+  if (KIOSK && S.settings.kiosk?.on_screen_keyboard !== false) {
+    osk = new OSK($('#osk'));
+    q.setAttribute('inputmode', 'none');
+    q.addEventListener('focus', () => osk.show(q));
+  }
+  $('#langBtn').addEventListener('click', () => { LANG = LANG === 'vi' ? 'en' : 'vi'; store.set('x24_lang', LANG); updateTitle(); render(); applyIdleText(); setHere(); });
+  // map controls
+  const ctl = $('#mapCtrl'); const ics = { zin: 'plus', zout: 'minus', here: 'locate', layers: 'layers' };
+  ctl.querySelectorAll('.mc').forEach(b => { b.innerHTML = icon(ics[b.dataset.act], 24); });
+  ctl.addEventListener('click', (e) => {
+    const b = e.target.closest('.mc'); if (!b) return;
+    const a = b.dataset.act;
+    if (a === 'zin') map.zoomIn(); else if (a === 'zout') map.zoomOut();
+    else if (a === 'here') locateMe();
+    else if (a === 'layers') toggleLayers();
+  });
+  // bottom sheet (mobile)
+  const handle = $('#sheetHandle'); let drag = null;
+  handle.addEventListener('pointerdown', (e) => { drag = { y: e.clientY, h: $('#panel').getBoundingClientRect().height }; handle.setPointerCapture(e.pointerId); $('#panel').classList.add('dragging'); });
+  handle.addEventListener('pointermove', (e) => { if (!drag) return; const h = Math.max(90, Math.min(window.innerHeight * .9, drag.h + drag.y - e.clientY)); $('#panel').style.setProperty('--sheet-h', h + 'px'); document.documentElement.style.setProperty('--sheet-h', h + 'px'); });
+  handle.addEventListener('pointerup', (e) => { if (!drag) return; $('#panel').classList.remove('dragging'); const h = $('#panel').getBoundingClientRect().height, H = window.innerHeight; setSheet(h < H * .3 ? 'min' : h < H * .66 ? 'half' : 'full'); if (Math.abs(drag.y - e.clientY) < 6) setSheet(S.sheet === 'min' ? 'half' : S.sheet === 'half' ? 'full' : 'half'); drag = null; });
+  window.addEventListener('resize', () => map?.resize());
+  // exit kiosk: long-press logo 3s
+  let lp; $('#brand').addEventListener('pointerdown', () => { lp = setTimeout(pinModal, 3000); });
+  ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => $('#brand').addEventListener(ev, () => clearTimeout(lp)));
+  $('#brand').addEventListener('click', () => { closeModal(); resetApp(); });
+  // clock
+  const tick = () => { const d = new Date(); const tm = d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }); const ds = d.toLocaleDateString(LANG === 'vi' ? 'vi-VN' : 'en-GB', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' }); $('#clockTime').textContent = tm; $('#clockDate').textContent = ds; $('#idleTime').textContent = tm; $('#idleDate').textContent = ds; };
+  tick(); setInterval(tick, 10000);
+  window.addEventListener('popstate', () => { if (S.stack.length > 1) back(); });
+}
+function setSheet(state) {
+  if (!MOBILE()) return;
+  S.sheet = state; const H = window.innerHeight;
+  const h = state === 'min' ? 96 : state === 'full' ? H * .86 : H * .46;
+  $('#panel').style.setProperty('--sheet-h', h + 'px'); document.documentElement.style.setProperty('--sheet-h', h + 'px');
+}
+function toggleLayers() {
+  const pop = $('#layerPop');
+  if (!pop.hidden) { pop.hidden = true; return; }
+  const opts = S.settings.tiles?.options || [];
+  pop.innerHTML = `<h4>${t('baseMap')}</h4>${opts.map(o => `<button class="lp-row${o.id === S.tileId ? ' on' : ''}" data-tile="${esc(o.id)}">${icon(o.id.includes('sat') ? 'globe' : 'map', 20)} ${esc(o.name)}${o.id === S.tileId ? `<span class="tick">${icon('check', 18)}</span>` : ''}</button>`).join('')}
+    <h4 style="margin-top:12px">${t('overlays')}</h4>
+    <button class="lp-row${S.showWards ? ' on' : ''}" data-ov="wards">${icon('map', 20)} ${t('showWards')}${S.showWards ? `<span class="tick">${icon('check', 18)}</span>` : ''}</button>
+    <button class="lp-row${S.showMetro ? ' on' : ''}" data-ov="metro">${icon('metro', 20)} ${t('showMetro')}${S.showMetro ? `<span class="tick">${icon('check', 18)}</span>` : ''}</button>`;
+  pop.hidden = false;
+  pop.onclick = (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.tile) setTiles(b.dataset.tile);
+    if (b.dataset.ov === 'wards') S.showWards = !S.showWards;
+    if (b.dataset.ov === 'metro') S.showMetro = !S.showMetro;
+    applyOverlays(); pop.hidden = true; toggleLayers();
+  };
+}
+function locateMe() {
+  if (KIOSK || !navigator.geolocation) { applyOrigin(); map.flyTo({ center: [S.origin.lng, S.origin.lat], zoom: 16, padding: mapPadding() }); return; }
+  navigator.geolocation.getCurrentPosition((pos) => {
+    onFix(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy, 'browser');
+    if (!IN_AREA(S.live)) toast(LANG === 'vi' ? 'Bạn đang ở ngoài khu vực bản đồ Hà Nội — dùng điểm xuất phát mặc định' : 'You are outside the map area');
+    map.flyTo({ center: [S.origin.lng, S.origin.lat], zoom: 16, padding: mapPadding() });
+  }, () => { toast(LANG === 'vi' ? 'Không lấy được vị trí — hãy cho phép truy cập vị trí' : 'Location unavailable'); map.flyTo({ center: [S.origin.lng, S.origin.lat], zoom: 15 }); }, { enableHighAccuracy: true, timeout: 8000 });
+}
+function resetApp() {
+  closeModal(); clearRoute(); S.catFilter = null; S.selPoi = null;
+  $('#q').value = ''; $('#qClear').hidden = true; osk?.hide();
+  $('#layerPop').hidden = true;
+  if (S.device?.ward_slug) { S.selWard = S.device.ward_slug; S.scope = 'ward'; }
+  if (S.device?.lat) S.origin = { lat: S.device.lat, lng: S.device.lng, label: t('youAreHere'), kind: 'kiosk' };
+  applyWardSel(false); updateTitle(); setHere();
+  go({ v: 'home' }, false);
+  renderMarkers();
+  const f = S.selWard && wardFeature(S.selWard);
+  if (f) fitGeom(f.geometry, 600); else map.flyTo({ center: S.settings.default_center, zoom: S.settings.default_zoom || 12.3 });
+}
+
+// ---------------------------------------------------------------- kiosk: idle + ads
+const Idle = { last: Date.now(), active: false, warned: false };
+function initKiosk() {
+  document.addEventListener('contextmenu', (e) => e.preventDefault());
+  const timeout = S.device?.idle_timeout || S.settings.idle_timeout || 40;
+  const warnAt = S.settings.idle_warning || 6;
+  const poke = () => { Idle.last = Date.now(); if (Idle.warned) { Idle.warned = false; hideToast('idle'); } };
+  ['pointerdown', 'keydown', 'wheel', 'touchstart', 'input'].forEach(ev => document.addEventListener(ev, poke, { capture: true, passive: true }));
+  setInterval(() => {
+    if (Idle.active) return;
+    const left = timeout - (Date.now() - Idle.last) / 1000;
+    if (left <= 0) enterIdle();
+    else if (left <= warnAt) {
+      Idle.warned = true;
+      toast(`${icon('clock', 20)} <span>${t('idleWarn')} <b>${Math.ceil(left)}</b> ${t('sec')}</span><button class="btn" id="stayBtn">${t('stay')}</button>`, 0, 'idle');
+    }
+  }, 500);
+  $('#idle').addEventListener('click', (e) => {
+    const qb = e.target.closest('[data-qcat]');
+    exitIdle();
+    if (qb) { const c = qb.dataset.qcat; if (c === 'transit') $('#panelBody').querySelector('[data-act="transit"]')?.click(); else { S.catFilter = c; go({ v: 'list', cat: c }); renderMarkers(); } }
+  });
+  loadAds();
+  applyIdleText();
+  if ((S.settings.kiosk?.start_screen || 'idle') === 'idle' && !params.get('poi')) enterIdle(false);
+  // heartbeat + tự nạp lại cấu hình
+  const hb = async () => {
+    try {
+      const r = await api('/api/public/heartbeat', { method: 'POST', body: JSON.stringify({ device: DEVICE, screen: `${screen.width}x${screen.height}`, gps: S.live ? { lat: S.live.lat, lng: S.live.lng, acc: S.live.acc, src: S.live.src } : null }) });
+      if (S.cfgVer == null) S.cfgVer = r.config_version; else if (r.config_version !== S.cfgVer && Idle.active) location.reload();
+      // Dữ liệu mới (địa điểm, quảng cáo, ranh giới…) được duyệt trên máy chủ → tự nạp lại khi kiosk đang ở chế độ chờ
+      if (r.data_version != null) { if (S.dataVer == null) S.dataVer = S.boot.data_version ?? r.data_version; if (r.data_version !== S.dataVer) { S.dataPending = true; if (Idle.active) location.reload(); } }
+    } catch { }
+  };
+  hb(); setInterval(hb, 60000);
+  setInterval(() => { if (Idle.active) loadAds(); }, 10 * 60000);
+}
+function applyIdleText() {
+  $('#idleCtaTitle').textContent = t('idleCta'); $('#idleCtaSub').textContent = t('idleSub');
+  const qs = [['hanh-chinh', 'building'], ['y-te', 'cross'], ['di-tich', 'temple'], ['transit', 'metro']];
+  $('#idleQuick').innerHTML = qs.map(([c, ic]) => `<button data-qcat="${c}">${icon(ic, 22)} ${esc(c === 'transit' ? t('transit') : catName(S.catMap[c]) || c)}</button>`).join('');
+}
+async function loadAds() {
+  try { S.ads = (await api('/api/public/ads' + (DEVICE ? `?device=${encodeURIComponent(DEVICE)}` : ''))).items; } catch { S.ads = S.ads || []; }
+  if (!S.ads.length) S.ads = [{ id: 0, media_type: 'html', html: `<div class='ad-hero ad-g1'><div class='ad-kicker'>Xanh24</div><h1>Maps for Life</h1><p>${esc(t('idleSub'))}</p></div>`, duration_sec: 10 }];
+  const stage = $('#idleStage');
+  stage.innerHTML = S.ads.map((a, i) => {
+    let inner = '';
+    if (a.media_type === 'image') inner = `<img src="${esc(a.media_url)}" alt="">`;
+    else if (a.media_type === 'video') inner = `<video src="${esc(a.media_url)}" muted playsinline preload="auto"></video>`;
+    else if (a.media_type === 'url') inner = `<iframe src="${esc(a.media_url)}" loading="lazy"></iframe>`;
+    else inner = a.html || '';
+    return `<div class="idle-slide" data-i="${i}">${inner}</div>`;
+  }).join('');
+  $('#idleDots').innerHTML = S.ads.length > 1 ? S.ads.map(() => '<i></i>').join('') : '';
+  if (Idle.active) playSlide(0);
+}
+let slideT, slideIdx = 0;
+function playSlide(i) {
+  clearTimeout(slideT);
+  const slides = $$('.idle-slide'); if (!slides.length) return;
+  slideIdx = (i + slides.length) % slides.length;
+  slides.forEach((s, k) => { s.classList.toggle('on', k === slideIdx); const v = s.querySelector('video'); if (v && k !== slideIdx) v.pause(); });
+  $$('#idleDots i').forEach((d, k) => d.classList.toggle('on', k === slideIdx));
+  const ad = S.ads[slideIdx]; const v = slides[slideIdx].querySelector('video');
+  if (v) { v.currentTime = 0; v.play().catch(() => { }); v.onended = () => playSlide(slideIdx + 1); slideT = setTimeout(() => playSlide(slideIdx + 1), Math.max(ad.duration_sec || 30, 5) * 1000 + 60000); }
+  else slideT = setTimeout(() => playSlide(slideIdx + 1), Math.max(ad.duration_sec || 10, 3) * 1000);
+  if (ad?.id) track('ad_impression', { ad: ad.id });
+}
+function enterIdle(reset = true) {
+  if (S.dataPending && reset) { flushEvents(); location.reload(); return; }
+  if (reset) resetApp();
+  hideToast('idle'); Idle.active = true; Idle.warned = false;
+  flushEvents();
+  $('#idle').hidden = false; playSlide(0);
+}
+function exitIdle() {
+  Idle.active = false; Idle.last = Date.now(); clearTimeout(slideT);
+  $$('.idle-slide video').forEach(v => v.pause());
+  $('#idle').hidden = true;
+  S.session = Math.random().toString(36).slice(2);
+  track('session_start', { kiosk: true });
+  map?.resize();
+}
+document.addEventListener('click', (e) => { if (e.target.id === 'stayBtn') { Idle.last = Date.now(); hideToast('idle'); } });
+function pinModal() {
+  let pin = '';
+  const draw = () => {
+    modal(`<div class="mh"><h3>${icon('shield', 22)} Quản trị thiết bị</h3><button class="round" data-close>${icon('close')}</button></div>
+      <div class="mb"><div class="pin-dots">${[0, 1, 2, 3].map(i => `<i class="${i < pin.length ? 'on' : ''}"></i>`).join('')}</div>
+      <div class="pin-pad">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 'C', 0, '⌫'].map(k => `<button data-k="${k}">${k}</button>`).join('')}</div></div>`);
+    $('#modalCard').querySelector('.pin-pad').onclick = async (e) => {
+      const k = e.target.closest('button')?.dataset.k; if (k == null) return;
+      if (k === 'C') pin = ''; else if (k === '⌫') pin = pin.slice(0, -1); else if (pin.length < 8) pin += k;
+      if (pin.length >= 4) {
+        try { await api('/api/public/kiosk/unlock', { method: 'POST', body: JSON.stringify({ pin }) }); return deviceMenu(); }
+        catch (err) { if (pin.length >= 8 || /PIN|Thử/.test(err.message)) { toast(esc(err.message)); pin = ''; } }
+      }
+      draw();
+    };
+  };
+  draw();
+}
+function deviceMenu() {
+  modal(`<div class="mh"><h3>${icon('device', 22)} Thiết bị: ${esc(DEVICE || '(chưa gán)')}</h3><button class="round" data-close>${icon('close')}</button></div>
+    <div class="mb"><p class="note">${esc(S.device?.name || '')} · ${esc(navigator.userAgent.slice(0, 80))}</p>
+    <label class="note" for="devCode">Mã thiết bị</label>
+    <div class="searchbox" style="margin:6px 0 14px;max-width:none"><input id="devCode" value="${esc(DEVICE)}" style="height:48px"></div>
+    <div class="btn-row"><button class="btn pri" id="devSave">${icon('check', 20)} Lưu & tải lại</button><button class="btn sec" id="devReload">${icon('refresh', 20)} Tải lại</button></div>
+    <div class="btn-row"><button class="btn sec" id="devWeb">${icon('logout', 20)} Thoát chế độ kiosk</button><button class="btn sec" id="devAdmin">${icon('settings', 20)} Trang quản trị</button></div></div>`);
+  { // chẩn đoán vị trí "Bạn đang ở đây"
+    const o = S.origin || {}, L = S.live, src = { app: 'ghim trong ứng dụng Android', admin: 'toạ độ khai báo ở trang quản trị', browser: 'định vị của trình duyệt/WebView', gps: 'GPS', network: 'Wi-Fi/mạng di động', passive: 'Android', fused: 'Android', pinned: 'ghim trong ứng dụng Android' };
+    const p = document.createElement('p'); p.className = 'note';
+    p.innerHTML = `<b>Vị trí đang dùng:</b> ${o.lat ? `${o.lat.toFixed(6)}, ${o.lng.toFixed(6)}` : '—'} · nguồn: ${esc(src[o.src] || o.src || o.kind || '—')}${o.acc ? ` · ±${Math.round(o.acc)} m` : ''}<br><b>Tín hiệu định vị của thiết bị:</b> ${L ? `${L.lat.toFixed(6)}, ${L.lng.toFixed(6)} · ±${Math.round(L.acc)} m · ${esc(src[L.src] || L.src)} · ${Math.round((Date.now() - L.at) / 1000)} giây trước` : 'chưa nhận được — kiểm tra đã bật Vị trí và cấp quyền cho ứng dụng'}`;
+    $('#modalCard .mb').insertBefore(p, $('#modalCard .mb label'));
+  }
+  $('#devSave').onclick = () => { const v = $('#devCode').value.trim(); if (v) store.set('x24_device', v); else store.del('x24_device'); location.href = '/' + (v ? `?device=${encodeURIComponent(v)}` : ''); };
+  $('#devReload').onclick = () => location.reload();
+  $('#devWeb').onclick = () => { location.href = '/?mode=web'; };
+  $('#devAdmin').onclick = () => { location.href = '/admin'; };
+  if (window.X24Android) { // đang chạy trong ứng dụng kiosk Android
+    let info = {}; try { info = JSON.parse(window.X24Android.info()); } catch (e) { }
+    const row = document.createElement('div'); row.className = 'btn-row';
+    row.innerHTML = `<button class="btn sec" id="devApp">${icon('device', 20)} Cài đặt ứng dụng Android</button>`;
+    $('#modalCard .mb').appendChild(row);
+    $('#modalCard .mb .note').textContent += ` · Ứng dụng kiosk ${info.version || ''} (${info.model || ''})`;
+    $('#devApp').onclick = () => { closeModal(); window.X24Android.openSettings(); };
+    if (window.X24Android.setPinned) {
+      const r2 = document.createElement('div'); r2.className = 'btn-row';
+      r2.innerHTML = `${S.lastPick ? `<button class="btn pri" id="devPin">${icon('pin', 20)} Ghim điểm vừa chạm trên bản đồ làm vị trí máy (${S.lastPick.lat.toFixed(5)}, ${S.lastPick.lng.toFixed(5)})</button>` : `<p class="note">Để ghim vị trí máy: đóng menu, chạm vào đúng chỗ đặt màn hình trên bản đồ, rồi mở lại menu này.</p>`}<button class="btn sec" id="devUnpin">${icon('refresh', 20)} Bỏ ghim (tự động)</button>`;
+      $('#modalCard .mb').appendChild(r2);
+      $('#devPin') && ($('#devPin').onclick = () => { window.X24Android.setPinned(S.lastPick.lat, S.lastPick.lng); closeModal(); setTimeout(() => { applyOrigin(); map.flyTo({ center: [S.origin.lng, S.origin.lat], zoom: 16 }); }, 400); });
+      $('#devUnpin').onclick = () => { window.X24Android.clearPinned(); closeModal(); };
+    }
+  }
+}
+// Ứng dụng kiosk Android báo có dữ liệu mới → nạp lại khi về chế độ chờ
+window.X24DataChanged = () => { S.dataPending = true; if (Idle.active) { flushEvents(); location.reload(); } };
+
+boot().catch((e) => {
+  console.error(e);
+  $('#panelBody').innerHTML = `<div class="pv"><div class="empty"><div class="ei">${icon('info', 30)}</div>Không kết nối được máy chủ. Đang thử lại…</div></div>`;
+  setTimeout(() => location.reload(), 15000);
+});

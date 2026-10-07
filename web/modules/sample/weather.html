@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Thời tiết</title>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:"Be Vietnam Pro",system-ui,sans-serif;background:linear-gradient(135deg,#2A62B8,#22C98A);color:#fff;min-height:100vh;display:grid;place-items:center}
+.card{text-align:center;padding:30px}
+.t{font-size:5rem;font-weight:800;line-height:1}
+.s{opacity:.9;font-size:1.1rem;margin-top:8px}
+.note{margin-top:26px;font-size:.85rem;opacity:.85;max-width:520px}
+code{background:rgba(255,255,255,.18);padding:2px 6px;border-radius:6px}
+</style></head>
+<body><div class="card">
+<div class="s" id="place">Hà Nội</div>
+<div class="t" id="temp">--°</div>
+<div class="s" id="desc">Đang tải…</div>
+<div class="note">Module mẫu. Dữ liệu lấy từ Open-Meteo (miễn phí, không cần khoá). Thay bằng nhà cung cấp chính thức bằng cách sửa <code>entry_url</code> trong Dashboard → Module mở rộng.</div>
+</div>
+<script>
+const p = new URLSearchParams(location.search);
+const lat = p.get('lat') || 21.0285, lng = p.get('lng') || 105.8542;
+const W = {0:'Trời quang',1:'Ít mây',2:'Có mây',3:'Nhiều mây',45:'Sương mù',48:'Sương mù',51:'Mưa phùn',61:'Mưa nhỏ',63:'Mưa vừa',65:'Mưa to',80:'Mưa rào',95:'Dông'};
+fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,weather_code,relative_humidity_2m&timezone=Asia%2FBangkok`)
+ .then(r => r.json()).then(d => { document.getElementById('temp').textContent = Math.round(d.current.temperature_2m) + '°C'; document.getElementById('desc').textContent = (W[d.current.weather_code] || 'Thời tiết') + ' · Độ ẩm ' + d.current.relative_humidity_2m + '%'; })
+ .catch(() => { document.getElementById('desc').textContent = 'Không kết nối được dịch vụ thời tiết'; });
+</script></body></html>

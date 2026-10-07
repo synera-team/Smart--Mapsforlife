@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Đặt xe · Xanh24 Maps for Life</title>
+<link rel="icon" href="/assets/favicon.png">
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--navy:#14346F;--line:#E3E9F2;--muted:#5B6B85;--grad:linear-gradient(120deg,#2A62B8,#1FA3B8 52%,#22C98A)}
+*{box-sizing:border-box}body{margin:0;font-family:"Be Vietnam Pro",system-ui,sans-serif;background:#F3F6FA;color:#13223F;min-height:100vh;display:flex;flex-direction:column}
+header{background:#fff;padding:14px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px}
+header img{height:40px}
+main{flex:1;padding:20px;max-width:520px;width:100%;margin:0 auto}
+.card{background:#fff;border:1px solid var(--line);border-radius:22px;padding:20px;box-shadow:0 2px 10px rgba(16,36,80,.06);margin-bottom:14px}
+.kick{font-size:.75rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#17A673}
+h1{margin:6px 0 4px;font-size:1.35rem;color:var(--navy)}
+.addr{color:var(--muted);font-size:.92rem}
+.btn{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;height:56px;border-radius:16px;font-weight:700;font-size:1.02rem;text-decoration:none;border:0;cursor:pointer;margin-top:10px;font-family:inherit}
+.pri{color:#fff}.sec{background:#fff;color:var(--navy);border:1.5px solid #D5DEEB}
+.grab{background:#00B14F}.xanhsm{background:#0DA9A2}
+.note{font-size:.84rem;color:var(--muted);line-height:1.55}
+.coords{font-variant-numeric:tabular-nums;font-size:.85rem;color:var(--muted);margin-top:8px}
+footer{background:var(--navy);color:#DDE6F6;font-size:.72rem;text-align:center;padding:10px}
+.ok{position:fixed;left:50%;bottom:30px;transform:translateX(-50%);background:var(--navy);color:#fff;padding:10px 16px;border-radius:12px;display:none}
+</style>
+</head>
+<body>
+<header><img src="/assets/logo.png" alt="Xanh24 - Maps for Life"></header>
+<main>
+  <div class="card"><div class="kick" id="kick">Điểm đến</div><h1 id="name">…</h1><div class="addr" id="addr"></div><div class="coords" id="coords"></div></div>
+  <div class="card">
+    <button class="btn pri" id="openApp">Mở ứng dụng</button>
+    <a class="btn sec" id="store" href="#">Tải ứng dụng</a>
+    <button class="btn sec" id="copy">Sao chép địa chỉ điểm đến</button>
+    <a class="btn sec" id="gmaps" href="#" target="_blank" rel="noopener">Xem trên Google Maps</a>
+    <p class="note" id="hint">Nếu ứng dụng không tự mở điểm đến, hãy dán địa chỉ đã sao chép vào ô “Điểm đến” trong ứng dụng.</p>
+  </div>
+</main>
+<footer id="foot">Bản quyền thuộc về Công ty TNHH Công nghệ và Truyền thông Xanh24</footer>
+<div class="ok" id="ok">Đã sao chép</div>
+<script>
+(async function(){
+  const p = new URLSearchParams(location.search);
+  const provider = location.pathname.split('/').pop();
+  const lat = parseFloat(p.get('lat')), lng = parseFloat(p.get('lng'));
+  const name = p.get('name') || '', addr = p.get('addr') || '';
+  document.getElementById('name').textContent = name || 'Điểm đến';
+  document.getElementById('addr').textContent = addr;
+  if (!isNaN(lat)) document.getElementById('coords').textContent = lat.toFixed(6) + ', ' + lng.toFixed(6);
+  let cfg = {};
+  try { const b = await (await fetch('/api/public/bootstrap')).json(); cfg = (b.settings.ride || {})[provider] || {}; document.getElementById('foot').textContent = b.settings.copyright; } catch(e){}
+  const label = cfg.name || provider;
+  document.title = 'Đặt ' + label + ' · Xanh24';
+  document.getElementById('kick').textContent = 'Đặt xe ' + label + ' tới';
+  const btn = document.getElementById('openApp');
+  btn.textContent = 'Mở ứng dụng ' + label;
+  btn.classList.add(provider);
+  const ua = navigator.userAgent;
+  const ios = /iPhone|iPad|iPod/i.test(ua), android = /Android/i.test(ua);
+  const storeUrl = ios ? cfg.ios_store : android ? cfg.android_store : (cfg.web || cfg.android_store);
+  const st = document.getElementById('store'); st.href = storeUrl || '#'; st.textContent = 'Tải ứng dụng ' + label;
+  document.getElementById('gmaps').href = 'https://www.google.com/maps/search/?api=1&query=' + lat + ',' + lng;
+  const fill = (s) => String(s || '').split('{lat}').join(lat).split('{lng}').join(lng).split('{name}').join(encodeURIComponent(name)).split('{addr}').join(encodeURIComponent(addr || name));
+  const deep = fill(cfg.app_url);
+  const copyAddr = async () => { const text = [name, addr].filter(Boolean).join(', ') || (lat + ',' + lng); try { await navigator.clipboard.writeText(text); } catch (e) { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); } };
+  const tryOpen = async () => {
+    if (!cfg.onelink) await copyAddr();
+    if (cfg.onelink && deep) { location.href = cfg.onelink.split('{deeplink}').join(encodeURIComponent(deep)); return; }
+    if (android && cfg.android_package) { location.href = 'intent://open#Intent;package=' + cfg.android_package + ';S.browser_fallback_url=' + encodeURIComponent(storeUrl || cfg.web) + ';end'; return; }
+    if (deep) { const t0 = Date.now(); location.href = deep; setTimeout(() => { if (Date.now() - t0 < 2200 && !document.hidden && storeUrl) location.href = storeUrl; }, 1600); return; }
+    location.href = storeUrl || cfg.web;
+  };
+  if (!cfg.onelink) document.getElementById('hint').textContent = label + ' chưa hỗ trợ điền sẵn điểm đến qua liên kết: khi bấm “Mở ứng dụng”, địa chỉ điểm đến được sao chép sẵn — hãy dán vào ô Điểm đến.';
+  btn.onclick = tryOpen;
+  document.getElementById('copy').onclick = async () => {
+    const text = [name, addr].filter(Boolean).join(', ') || (lat + ',' + lng);
+    try { await navigator.clipboard.writeText(text); } catch(e) { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
+    const ok = document.getElementById('ok'); ok.style.display = 'block'; setTimeout(() => ok.style.display = 'none', 1600);
+  };
+  if (cfg.onelink && (ios || android)) setTimeout(tryOpen, 500);
+})();
+</script>
+</body>
+</html>
