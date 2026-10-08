@@ -29,7 +29,7 @@ Bản đồ số hành chính & dịch vụ công cho màn hình LCD Android tư
 **Trang tải ứng dụng (`/download`)**
 - Yêu cầu mã PIN trước khi hiển thị danh sách APK; tải tệp qua backend và không đưa URL Google Drive vào trình duyệt.
 - Mã QR mở trang tải và đánh dấu ứng dụng tương ứng; người nhận vẫn cần nhập mã PIN.
-- Danh sách thử nghiệm hiện có APK `LCD_kiosk_Dong_Do_ver 1.0.0.apk` từ Google Drive dùng chung. Tệp được proxy qua backend, bao gồm bước xác nhận cảnh báo tải của Google; các APK trong `web/downloads/` không được đưa vào danh sách này.
+- Danh sách thử nghiệm hiện có APK `LCD_kiosk_Dong_Do ver_2.0.0.apk` từ Google Drive dùng chung. Tệp được proxy qua backend, bao gồm bước xác nhận cảnh báo tải của Google; các APK trong `web/downloads/` không được đưa vào danh sách này.
 - Để đưa thêm ứng dụng lên danh sách, khai báo metadata và Drive file ID trong `DOWNLOAD_APPS` ở `server/app.py`. Chỉ file ID ở backend được dùng để tải, không gửi link Drive cho trình duyệt.
 
 ## Chạy thử

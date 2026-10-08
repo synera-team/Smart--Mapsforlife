@@ -45,12 +45,12 @@ app.json.sort_keys = False
 
 DOWNLOAD_APPS = (
     {
-        "id": "dong-do-1.0.0",
-        "name": "LCD_kiosk_Dong_Do_ver 1.0.0.apk",
+        "id": "dong-do-2.0.0",
+        "name": "LCD_kiosk_Dong_Do ver_2.0.0.apk",
         "title": "LCD Kiosk · Đại học Đông Đô",
-        "version": "1.0.0",
-        "size": 4353971,
-        "drive_id": "1t59VGON6pcxCOyktS8kntTsbJnpvEDEc",
+        "version": "2.0.0",
+        "size": 1608323,
+        "drive_id": "1tT1yFbIZkpHeTgCT1CKqwFQgQjqp4RZf",
     },
 )
 
