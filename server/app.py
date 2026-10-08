@@ -12,10 +12,13 @@ import secrets
 import sys
 import threading
 import time
+import urllib.error
+import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from flask import Flask, Response, abort, g, jsonify, redirect, request, send_file, send_from_directory
+from flask import (Flask, Response, abort, g, jsonify, redirect, request, send_file, send_from_directory, session,
+                  stream_with_context)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -23,7 +26,7 @@ import importer  # noqa: E402
 import routing  # noqa: E402
 from auth import (PERMISSIONS, ROLE_LABEL, audit, check_password, current_user, has_perm, hash_password,  # noqa: E402
                   issue_token, login_failed, login_ok, login_throttled, password_problem, public_user, require,
-                  ward_allowed)
+                  secret as auth_secret, ward_allowed)
 from db import (BASE_DIR, DATA_DIR, IS_PG, POI_JSON, UPLOAD_DIR, all_settings, ex, get_setting, init_db, load_media, now, q,  # noqa: E402
                 row2dict, set_setting)
 from geoutil import area_km2, bbox, centroid, haversine_m, point_in_geom, validate_geometry  # noqa: E402
@@ -39,6 +42,17 @@ app = Flask(__name__, static_folder=None)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 app.json.ensure_ascii = False
 app.json.sort_keys = False
+
+DOWNLOAD_APPS = (
+    {
+        "id": "dong-do-1.0.0",
+        "name": "LCD_kiosk_Dong_Do_ver 1.0.0.apk",
+        "title": "LCD Kiosk · Đại học Đông Đô",
+        "version": "1.0.0",
+        "size": 4353971,
+        "drive_id": "1t59VGON6pcxCOyktS8kntTsbJnpvEDEc",
+    },
+)
 
 POI_FIELDS = ["name", "name_en", "category", "ward_slug", "address", "phone", "website", "hours", "description",
               "lat", "lng", "images", "vr360", "tags", "extra", "featured"]
@@ -217,6 +231,18 @@ def index():
 @app.route("/admin/")
 def admin_index():
     return send_from_directory(os.path.join(WEB_DIR, "admin"), "index.html")
+
+
+@app.route("/download")
+@app.route("/download/")
+def download_index():
+    return send_from_directory(WEB_DIR, "download.html")
+
+
+@app.route("/downloads")
+@app.route("/downloads/<path:p>")
+def block_public_apk_files(p=""):
+    abort(404)
 
 
 @app.route("/uploads/<path:p>")
@@ -505,6 +531,111 @@ def public_version():
     """Kiểm tra nhanh có dữ liệu mới hay không (dùng cho ứng dụng kiosk Android)."""
     return jsonify(data_version=data_version(), config_version=get_setting("config_version", 0), server_time=now(), app_version=VERSION,
                    kiosk_app=get_setting("kiosk_app", {}) or {})
+
+
+# ======================================================================= protected APK downloads
+def download_authenticated():
+    return session.get("download_access") is True
+
+
+@app.route("/api/download/login", methods=["POST"])
+def download_login():
+    expected_pin = os.environ.get("XANH24_DOWNLOAD_PIN", "")
+    if not expected_pin:
+        return err("Trang tải chưa được cấu hình mã PIN", 503)
+    key = "download|" + (request.remote_addr or "unknown")
+    wait = login_throttled(key)
+    if wait:
+        return err(f"Nhập sai mã PIN quá nhiều lần. Thử lại sau {wait} giây.", 429)
+    pin = str(body().get("pin") or "")
+    if not pin or not hmac.compare_digest(pin, expected_pin):
+        login_failed(key)
+        return err("Mã PIN không đúng", 401)
+    login_ok(key)
+    session["download_access"] = True
+    session.permanent = True
+    return jsonify(ok=True)
+
+
+@app.route("/api/download/logout", methods=["POST"])
+def download_logout():
+    session.pop("download_access", None)
+    session.modified = True
+    return jsonify(ok=True)
+
+
+@app.route("/api/download/files")
+def download_files():
+    if not download_authenticated():
+        return err("Cần nhập mã PIN để xem danh sách tải xuống", 401)
+    return jsonify(files=[
+        {
+            "id": item["id"],
+            "name": item["name"],
+            "title": item["title"],
+            "version": item["version"],
+            "size": item["size"],
+            "url": "/api/download/file/" + urllib.parse.quote(item["id"]),
+        }
+        for item in DOWNLOAD_APPS
+    ])
+
+
+@app.route("/api/download/file/<file_id>")
+def download_file(file_id):
+    if not download_authenticated():
+        return err("Cần nhập mã PIN trước khi tải ứng dụng", 401)
+    item = next((app for app in DOWNLOAD_APPS if app["id"] == file_id), None)
+    if not item:
+        abort(404)
+
+    download_url = (
+        "https://drive.google.com/uc?export=download&id="
+        + urllib.parse.quote(item["drive_id"], safe="")
+    )
+    try:
+        upstream = urllib.request.urlopen(download_url, timeout=30)
+        content_type = upstream.headers.get("Content-Type", "").lower()
+        if "text/html" in content_type:
+            confirmation = upstream.read(65536).decode("utf-8", errors="replace")
+            upstream.close()
+            match = re.search(r'name=["\']uuid["\']\s+value=["\']([0-9a-fA-F-]{36})["\']', confirmation)
+            if not match or "Google Drive can't scan this file for viruses." not in confirmation:
+                app.logger.error("Google Drive returned an unexpected response for %s", item["id"])
+                return err("Google Drive không trả về tệp APK có thể tải", 502)
+            confirm_url = "https://drive.usercontent.google.com/download?" + urllib.parse.urlencode({
+                "id": item["drive_id"],
+                "export": "download",
+                "confirm": "t",
+                "uuid": match.group(1),
+            })
+            upstream = urllib.request.urlopen(confirm_url, timeout=60)
+            content_type = upstream.headers.get("Content-Type", "").lower()
+        if "text/html" in content_type:
+            upstream.close()
+            app.logger.error("Google Drive returned HTML instead of the APK for %s", item["id"])
+            return err("Google Drive không trả về tệp APK có thể tải", 502)
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        app.logger.error("Unable to fetch APK %s from Google Drive: %s", item["id"], e)
+        return err("Không thể kết nối Google Drive để tải ứng dụng", 502)
+
+    def stream_apk():
+        try:
+            while chunk := upstream.read(64 * 1024):
+                yield chunk
+        finally:
+            upstream.close()
+
+    response = Response(
+        stream_with_context(stream_apk()),
+        mimetype="application/vnd.android.package-archive",
+    )
+    response.headers["Content-Disposition"] = f'attachment; filename="{item["name"]}"'
+    response.headers["Cache-Control"] = "private, no-store"
+    content_length = upstream.headers.get("Content-Length")
+    if content_length and content_length.isdigit():
+        response.headers["Content-Length"] = content_length
+    return response
 
 
 # ======================================================================= auth
@@ -1405,6 +1536,14 @@ def not_found(e):
 
 # ======================================================================= bootstrap
 def create_app():
+    app.secret_key = auth_secret()
+    app.config.update(
+        PERMANENT_SESSION_LIFETIME=timedelta(hours=8),
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE="Lax",
+        SESSION_COOKIE_SECURE=os.environ.get("XANH24_SESSION_COOKIE_SECURE", "").lower() == "true"
+        or bool(os.environ.get("VERCEL")),
+    )
     # Postgres: khoá tư vấn để nhiều tiến trình khởi động cùng lúc (VD: Vercel) không tạo dữ liệu mẫu trùng
     if IS_PG:
         ex("SELECT pg_advisory_lock(2424)")

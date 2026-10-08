@@ -26,6 +26,12 @@ Bản đồ số hành chính & dịch vụ công cho màn hình LCD Android tư
 - Quản lý màn hình kiosk (trực tuyến/ngoại tuyến, vị trí “Bạn đang ở đây”, thời gian chờ riêng, QR cài đặt), quảng cáo chờ (lịch phát, ưu tiên, theo thiết bị), ranh giới phường (đối chiếu bản đồ gốc, thay GeoJSON chính thức), xe buýt & metro, thống kê sử dụng, nhật ký thao tác.
 - **Cổng mở rộng**: module iframe có giao tiếp `postMessage`, module Python phía máy chủ, API key, webhook (xem `docs/MODULES.md`).
 
+**Trang tải ứng dụng (`/download`)**
+- Yêu cầu mã PIN trước khi hiển thị danh sách APK; tải tệp qua backend và không đưa URL Google Drive vào trình duyệt.
+- Mã QR mở trang tải và đánh dấu ứng dụng tương ứng; người nhận vẫn cần nhập mã PIN.
+- Danh sách thử nghiệm hiện có APK `LCD_kiosk_Dong_Do_ver 1.0.0.apk` từ Google Drive dùng chung. Tệp được proxy qua backend, bao gồm bước xác nhận cảnh báo tải của Google; các APK trong `web/downloads/` không được đưa vào danh sách này.
+- Để đưa thêm ứng dụng lên danh sách, khai báo metadata và Drive file ID trong `DOWNLOAD_APPS` ở `server/app.py`. Chỉ file ID ở backend được dùng để tải, không gửi link Drive cho trình duyệt.
+
 ## Chạy thử
 
 Yêu cầu Python 3.10+.
@@ -70,6 +76,8 @@ Sau khi có tên miền: *Dashboard → Cấu hình → Địa chỉ công khai*
 |---|---|
 | `XANH24_SECRET` | Khoá ký phiên đăng nhập (bắt buộc đặt khi chạy nhiều worker) |
 | `XANH24_ADMIN_PASSWORD` | Mật khẩu tài khoản `admin` (S0) ở lần khởi tạo đầu |
+| `XANH24_DOWNLOAD_PIN` | Mã PIN bắt buộc để mở `/download` (không đặt mặc định) |
+| `XANH24_SESSION_COOKIE_SECURE` | Đặt `true` nếu chạy HTTPS ngoài Vercel; Vercel tự bật cookie Secure |
 | `XANH24_DATA_DIR` | Thư mục dữ liệu (mặc định `./data`) |
 | `XANH24_MAX_UPLOAD_MB` | Dung lượng tải lên tối đa (mặc định 200) |
 | `PORT` | Cổng (mặc định 8024) |
@@ -81,7 +89,7 @@ Dòng lệnh: `python server/manage.py create-user <user> <S0|S1|CW> <mật kh�
 Vercel không có ổ đĩa bền: nếu chỉ dùng SQLite, dữ liệu quản trị (địa điểm, vị trí kiosk, ảnh tải lên…) **sẽ mất** mỗi khi máy chủ khởi động lại. Từ v1.2 hệ thống hỗ trợ Postgres:
 
 1. Vercel → dự án → **Storage → Create Database → Neon (Postgres)** → Connect vào dự án (tự thêm biến `DATABASE_URL`/`POSTGRES_URL`). Hoặc dùng Supabase/Neon bất kỳ và tự thêm `DATABASE_URL=postgresql://…?sslmode=require`.
-2. **Settings → Environment Variables**: `XANH24_SECRET` (chuỗi ngẫu nhiên dài), `XANH24_ADMIN_PASSWORD` (mật khẩu `admin`).
+2. **Settings → Environment Variables**: `XANH24_SECRET` (chuỗi ngẫu nhiên dài), `XANH24_ADMIN_PASSWORD` (mật khẩu `admin`), `XANH24_DOWNLOAD_PIN` (PIN để mở trang tải APK).
 3. Đẩy mã lên nhánh `main` → Vercel tự triển khai. Lần chạy đầu tự tạo bảng và dữ liệu mẫu trong Postgres; ảnh tải lên được lưu trong CSDL (bảng `media_files`).
 4. Kiểm tra: `https://www.xanh24.com/api/public/version` phải trả JSON có `data_version`.
 
@@ -95,7 +103,7 @@ Máy chủ riêng (VPS/Docker) vẫn dùng SQLite mặc định; đặt `DATABAS
 
 ## Cài đặt màn hình LCD Android
 
-**Cách khuyến nghị: ứng dụng `Xanh24 Kiosk` (APK)** — xem `android/README.md`. Tải tại `https://<tên-miền>/downloads/Xanh24-Kiosk.apk`, mở lần đầu nhập địa chỉ máy chủ + mã màn hình. Ứng dụng tự chạy toàn màn hình, tự tải lại khi mất mạng/treo, tự cập nhật dữ liệu khi quản trị duyệt nội dung mới.
+**Cách khuyến nghị: ứng dụng `Xanh24 Kiosk` (APK)** — xem `android/README.md`. Mở `https://<tên-miền>/download`, nhập mã PIN và tải APK, mở lần đầu nhập địa chỉ máy chủ + mã màn hình. Ứng dụng tự chạy toàn màn hình, tự tải lại khi mất mạng/treo, tự cập nhật dữ liệu khi quản trị duyệt nội dung mới.
 
 Cách khác (trình duyệt kiosk):
 
