@@ -1,5 +1,5 @@
-"""Điểm vào Vercel cho API và giao diện đã build trong frontend/dist.
-
+"""Điểm vào Vercel: chỉ xử lý /api/* và /uploads/*.
+Giao diện (web/) do Vercel phục vụ trực tiếp như tệp tĩnh (outputDirectory = web).
 Đường dẫn gốc được truyền qua tham số ?__p=… trong vercel.json để Flask định tuyến đúng.
 """
 import os

@@ -25,10 +25,6 @@ class DownloadPageTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        import db
-        conn = getattr(db._local, "conn", None)
-        if conn is not None:
-            conn.close()
         cls.temp_dir.cleanup()
         for name in ("XANH24_DATA_DIR", "XANH24_DB", "XANH24_ADMIN_PASSWORD", "XANH24_DOWNLOAD_PIN"):
             os.environ.pop(name, None)
@@ -52,10 +48,10 @@ class DownloadPageTests(unittest.TestCase):
         self.assertEqual(result.status_code, 200)
         self.assertEqual(len(result.json["files"]), 1)
         item = result.json["files"][0]
-        self.assertEqual(item["name"], "LCD_kiosk_Dong_Do ver_2.0.0.apk")
+        self.assertEqual(item["name"], "LCD_kiosk_Dong_Do_ver 1.0.0.apk")
         self.assertEqual(item["title"], "LCD Kiosk · Đại học Đông Đô")
-        self.assertEqual(item["version"], "2.0.0")
-        self.assertEqual(item["size"], 1608323)
+        self.assertEqual(item["version"], "1.0.0")
+        self.assertEqual(item["size"], 4353971)
         self.assertTrue(all("drive.google.com" not in item["url"] for item in result.json["files"]))
         self.assertNotIn("drive_id", item)
         self.assertEqual(self.client.get("/api/download/file/Xanh24-Kiosk.apk").status_code, 404)
