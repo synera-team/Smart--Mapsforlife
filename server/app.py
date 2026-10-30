@@ -21,9 +21,21 @@ from flask import (Flask, Response, abort, g, jsonify, redirect, request, send_f
                   stream_with_context)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Windows consoles and redirected logs default to cp1252, which cannot print Vietnamese and used to crash startup.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        if (_stream.encoding or "").lower().replace("-", "") != "utf8":
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
 
 import importer  # noqa: E402
 import routing  # noqa: E402
+from cms import cms, seed_plans  # noqa: E402
+from cms_applications import applications  # noqa: E402
+from user_discovery import discovery  # noqa: E402
+from m4l import init_m4l, m4l  # noqa: E402
+from m4l_demo import demo as m4l_demo  # noqa: E402
 from auth import (PERMISSIONS, ROLE_LABEL, audit, check_password, current_user, has_perm, hash_password,  # noqa: E402
                   issue_token, login_failed, login_ok, login_throttled, password_problem, public_user, require,
                   secret as auth_secret, ward_allowed)
@@ -34,11 +46,18 @@ from media import save_upload  # noqa: E402
 from seed import seed_all  # noqa: E402
 
 VERSION = "1.3.0"
-WEB_DIR = os.path.join(BASE_DIR, "web")
+LEGACY_WEB_DIR = os.path.join(BASE_DIR, "web")
+FRONTEND_DIR = os.path.join(BASE_DIR, "frontend", "dist")
+WEB_DIR = FRONTEND_DIR if os.path.isfile(os.path.join(FRONTEND_DIR, "index.html")) else LEGACY_WEB_DIR
 DEFAULT_MAX_UPLOAD_MB = "4" if os.environ.get("VERCEL") else "200"
 MAX_UPLOAD_MB = int(os.environ.get("XANH24_MAX_UPLOAD_MB", DEFAULT_MAX_UPLOAD_MB))
 
 app = Flask(__name__, static_folder=None)
+app.register_blueprint(cms)
+app.register_blueprint(applications)
+app.register_blueprint(discovery)
+app.register_blueprint(m4l)
+app.register_blueprint(m4l_demo)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 app.json.ensure_ascii = False
 app.json.sort_keys = False
@@ -152,6 +171,8 @@ def apply_revision(rev, reviewer):
         fire_webhook("poi.created", {"id": pid})
         return pid
     pid = rev["poi_id"]
+    if q("SELECT 1 FROM cms_pins WHERE poi_id=?", (pid,), one=True):
+        raise ValueError("Ghim thuộc CMS; nội dung và trạng thái phải được xử lý trong CMS")
     if not q("SELECT 1 FROM pois WHERE id=?", (pid,), one=True):
         raise ValueError("Địa điểm gốc không còn tồn tại")
     if rev["action"] == "update":
@@ -224,18 +245,53 @@ def headers(resp):
 
 @app.route("/")
 def index():
-    return send_from_directory(WEB_DIR, "index.html")
+    response = send_from_directory(WEB_DIR, "index.html", conditional=False)
+    if WEB_DIR != LEGACY_WEB_DIR:
+        response.direct_passthrough = False
+        html = response.get_data(as_text=True)
+        html = html.replace("</head>", '<link rel="stylesheet" href="/cms/map-login.css">\n'
+                            '<script src="/cms/map-login.js" defer></script>\n</head>', 1)
+        response.set_data(html)
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.route("/admin")
 @app.route("/admin/")
 def admin_index():
+    if WEB_DIR != LEGACY_WEB_DIR:
+        response = send_from_directory(WEB_DIR, "index.html")
+        response.headers["X-Robots-Tag"] = "noindex"
+        return response
     return send_from_directory(os.path.join(WEB_DIR, "admin"), "index.html")
+
+
+@app.route("/cms")
+@app.route("/cms/")
+def cms_index():
+    return redirect("/cms/login")
+
+
+@app.route("/cms/login")
+@app.route("/hrm/login")
+@app.route("/dashboard/kiosk")
+@app.route("/dashboard/admin")
+def cms_portal_page():
+    return send_from_directory(os.path.join(LEGACY_WEB_DIR, "cms"), "index.html")
+
+
+@app.route("/dashboard/user")
+def user_dashboard_page():
+    return send_from_directory(os.path.join(LEGACY_WEB_DIR, "user"), "index.html")
 
 
 @app.route("/download")
 @app.route("/download/")
 def download_index():
+    if WEB_DIR != LEGACY_WEB_DIR:
+        response = send_from_directory(WEB_DIR, "index.html")
+        response.headers["X-Robots-Tag"] = "noindex, nofollow"
+        return response
     return send_from_directory(WEB_DIR, "download.html")
 
 
@@ -247,6 +303,8 @@ def block_public_apk_files(p=""):
 
 @app.route("/uploads/<path:p>")
 def uploads(p):
+    if p.replace("\\", "/").lstrip("/").split("/", 1)[0].lower() == "cms-application-documents":
+        abort(404)
     full = os.path.join(UPLOAD_DIR, p)
     if not os.path.isfile(full) and IS_PG and ".." not in p:
         m = load_media(p)  # tệp lưu trong Postgres → ghi lại bộ nhớ đệm đĩa rồi phục vụ
@@ -261,6 +319,8 @@ def uploads(p):
 
 @app.route("/go/<provider>")
 def go(provider):
+    if WEB_DIR != LEGACY_WEB_DIR:
+        return send_from_directory(WEB_DIR, "index.html")
     return send_from_directory(WEB_DIR, "go.html")
 
 
@@ -269,10 +329,13 @@ def static_files(p):
     full = os.path.join(WEB_DIR, p)
     if os.path.isdir(full):
         p = p.rstrip("/") + "/index.html"
-    if not os.path.exists(os.path.join(WEB_DIR, p)):
+    root = WEB_DIR
+    if not os.path.isfile(os.path.join(root, p)) and WEB_DIR != LEGACY_WEB_DIR:
+        root = LEGACY_WEB_DIR
+    if not os.path.isfile(os.path.join(root, p)):
         abort(404)
     max_age = 3600 if p.startswith(("vendor/", "assets/")) else 0
-    return send_from_directory(WEB_DIR, p, max_age=max_age)
+    return send_from_directory(root, p, max_age=max_age)
 
 
 # ======================================================================= public API
@@ -292,14 +355,17 @@ def bootstrap():
             for k in ("last_ip", "user_agent", "notes"):
                 dev.pop(k, None)
     cats = [dict(r) for r in q("SELECT id,name,name_en,icon,color FROM categories WHERE active=1 ORDER BY sort")]
-    counts = {r["category"]: r["n"] for r in q("SELECT category,COUNT(*) n FROM pois WHERE status='published' GROUP BY category")}
+    visible = ("NOT EXISTS (SELECT 1 FROM cms_pins cp WHERE cp.poi_id=p.id AND "
+               "(cp.active=0 OR cp.approved_at IS NULL OR cp.expires_at IS NULL OR cp.expires_at<=?))")
+    counts = {r["category"]: r["n"] for r in q(
+        f"SELECT p.category,COUNT(*) n FROM pois p WHERE p.status='published' AND {visible} GROUP BY p.category", (now(),))}
     for c in cats:
         c["count"] = counts.get(c["id"], 0)
     mods = [row2dict(r, ("config",)) for r in q("SELECT key,name,description,kind,entry_url,icon,color,placement,config FROM modules WHERE enabled=1 ORDER BY sort")]
     wards = [dict(slug=r["slug"], name=r["name"], short=r["short"], type=r["type"], area_km2=r["area_km2"],
                   hq=json.loads(r["hq"] or "null"), info=json.loads(r["info"] or "{}"),
                   poi_count=r["n"]) for r in
-             q("SELECT w.*, (SELECT COUNT(*) FROM pois p WHERE p.ward_slug=w.slug AND p.status='published') n FROM wards w WHERE published=1 ORDER BY short")]
+             q(f"SELECT w.*, (SELECT COUNT(*) FROM pois p WHERE p.ward_slug=w.slug AND p.status='published' AND {visible}) n FROM wards w WHERE published=1 ORDER BY short", (now(),))]
     return jsonify(version=VERSION, data_version=data_version(), settings=public_settings(), device=dev, categories=cats, modules=mods, wards=wards,
                    server_time=now())
 
@@ -333,8 +399,10 @@ def _public_poi(r, full=False):
 
 @app.route("/api/public/pois")
 def public_pois():
-    sql = "SELECT * FROM pois WHERE status='published'"
-    args = []
+    sql = ("SELECT * FROM pois WHERE status='published' AND NOT EXISTS "
+           "(SELECT 1 FROM cms_pins cp WHERE cp.poi_id=pois.id AND "
+           "(cp.active=0 OR cp.approved_at IS NULL OR cp.expires_at IS NULL OR cp.expires_at<=?))")
+    args = [now()]
     if request.args.get("ward"):
         sql += " AND ward_slug=?"; args.append(request.args["ward"])
     if request.args.get("category"):
@@ -349,7 +417,9 @@ def public_pois():
 
 @app.route("/api/public/pois/<int:pid>")
 def public_poi(pid):
-    r = q("SELECT * FROM pois WHERE id=? AND status='published'", (pid,), one=True)
+    r = q("SELECT * FROM pois WHERE id=? AND status='published' AND NOT EXISTS "
+          "(SELECT 1 FROM cms_pins cp WHERE cp.poi_id=pois.id AND "
+          "(cp.active=0 OR cp.approved_at IS NULL OR cp.expires_at IS NULL OR cp.expires_at<=?))", (pid, now()), one=True)
     if not r:
         return err("Không tìm thấy địa điểm", 404)
     d = _public_poi(r, full=True)
@@ -523,7 +593,9 @@ def data_version():
     cond = " OR ".join("action LIKE ?" for _ in DATA_ACTIONS)
     r = q(f"SELECT MAX(at) AS v FROM audit WHERE {cond}", tuple(a + ("%" if a.endswith(".") else "") for a in DATA_ACTIONS), one=True)
     r2 = q("SELECT MAX(COALESCE(published_at, updated_at, 0)) AS v FROM pois", one=True)
-    return max((r and r["v"]) or 0, (r2 and r2["v"]) or 0, get_setting("config_version", 0) or 0)
+    expired = q("SELECT MAX(expires_at) AS v FROM cms_pins WHERE expires_at<=?", (now(),), one=True)
+    return max((r and r["v"]) or 0, (r2 and r2["v"]) or 0, (expired and expired["v"]) or 0,
+               get_setting("config_version", 0) or 0)
 
 
 @app.route("/api/public/version")
@@ -799,6 +871,8 @@ def admin_poi_create():
 @app.route("/api/admin/pois/<int:pid>", methods=["PUT"])
 @require("poi.propose")
 def admin_poi_update(pid):
+    if q("SELECT 1 FROM cms_pins WHERE poi_id=?", (pid,), one=True):
+        return err("Ghim thuộc CMS; không thể sửa địa chỉ hoặc nội dung tại đây", 403)
     r = q("SELECT * FROM pois WHERE id=?", (pid,), one=True)
     if not r:
         return err("Không tìm thấy", 404)
@@ -817,6 +891,8 @@ def admin_poi_update(pid):
 @app.route("/api/admin/pois/<int:pid>", methods=["DELETE"])
 @require("poi.propose")
 def admin_poi_delete(pid):
+    if q("SELECT 1 FROM cms_pins WHERE poi_id=?", (pid,), one=True):
+        return err("Ghim thuộc CMS; không thể xóa tại đây", 403)
     r = q("SELECT * FROM pois WHERE id=?", (pid,), one=True)
     if not r:
         return err("Không tìm thấy", 404)
@@ -834,6 +910,8 @@ def admin_poi_delete(pid):
 @app.route("/api/admin/pois/<int:pid>/status", methods=["POST"])
 @require("poi.publish")
 def admin_poi_status(pid):
+    if q("SELECT 1 FROM cms_pins WHERE poi_id=?", (pid,), one=True):
+        return err("Trạng thái ghim được quản lý tại CMS", 403)
     st = body().get("status")
     if st not in ("published", "hidden", "archived"):
         return err("Trạng thái không hợp lệ")
@@ -1531,7 +1609,7 @@ def too_large(e):
 def not_found(e):
     if request.path.startswith("/api/"):
         return err("Không tìm thấy", 404)
-    return send_from_directory(WEB_DIR, "404.html"), 404
+    return send_from_directory(LEGACY_WEB_DIR, "404.html"), 404
 
 
 # ======================================================================= bootstrap
@@ -1551,6 +1629,8 @@ def create_app():
         init_db()
         with app.app_context():
             seed_all(log=lambda m: print(m))
+            seed_plans()
+            init_m4l(log=lambda m: print(m))  # after seeding: the pilot area needs ward boundaries
             from modules import load_plugins
             load_plugins(app)
     finally:
@@ -1563,4 +1643,9 @@ if __name__ == "__main__":
     create_app()
     port = int(os.environ.get("PORT", "8024"))
     print(f"Xanh24 Maps for Life {VERSION} — http://localhost:{port}  (quản trị: /admin)")
+    import m4l_demo as _demo
+    from db import DB_PATH
+    print(f"  CSDL: {'Postgres' if IS_PG else DB_PATH}")
+    print(f"  M4L: {'bật' if os.environ.get('XANH24_M4L_ENABLED', '').lower() in ('1', 'true', 'yes', 'on') else 'TẮT (đặt XANH24_M4L_ENABLED=1, nếu không /m4l trả 404)'}"
+          f"{' · chế độ demo /demo' if _demo.enabled() else ''}")
     app.run(host="0.0.0.0", port=port, debug=bool(os.environ.get("XANH24_DEBUG")), threaded=True)

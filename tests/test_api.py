@@ -133,4 +133,5 @@ r = c.post("/api/public/geolocate", json={"wifi": [{"mac": "aa:bb:cc:dd:ee:01", 
 check(r.status_code == 200 and abs(r.json["lat"] - 21.0245) < 1e-6 and r.json["acc"] == 25, "định vị kiosk qua Wi-Fi")
 check(c.post("/api/public/geolocate", json={"wifi": []}).status_code == 404, "Wi-Fi rỗng → báo không xác định được")
 print(f"\nTẤT CẢ {ok} KIỂM THỬ ĐẠT")
+db._local.conn.close()
 shutil.rmtree(tmp)

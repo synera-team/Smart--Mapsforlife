@@ -208,6 +208,83 @@ CREATE TABLE IF NOT EXISTS transit_stops(
 );
 """
 
+# CMS lives beside the existing S0/S1/CW admin model, so existing accounts and
+# public map data do not need a destructive role migration.
+SCHEMA += """
+CREATE TABLE IF NOT EXISTS cms_accounts(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
+  full_name TEXT DEFAULT '', email TEXT DEFAULT '', phone TEXT DEFAULT '',
+  birth_date TEXT DEFAULT '', gender TEXT DEFAULT '',
+  role TEXT NOT NULL CHECK(role IN ('AREA','CONTENT','REVIEW','OWNER','USER')),
+  wards TEXT DEFAULT '[]', active INTEGER DEFAULT 1, read_only INTEGER DEFAULT 0,
+  created_by INTEGER, created_at INTEGER, last_login INTEGER
+);
+CREATE TABLE IF NOT EXISTS user_saved_places(
+  account_id INTEGER NOT NULL,
+  poi_id INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY(account_id, poi_id)
+);
+CREATE TABLE IF NOT EXISTS cms_pins(
+  poi_id INTEGER PRIMARY KEY,
+  active INTEGER DEFAULT 1,
+  approved_at INTEGER,
+  expires_at INTEGER,
+  managed_by INTEGER,
+  created_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS cms_assignments(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id INTEGER UNIQUE NOT NULL,
+  poi_id INTEGER NOT NULL,
+  assigned_at INTEGER NOT NULL,
+  released_at INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS cms_one_current_owner ON cms_assignments(poi_id) WHERE released_at IS NULL;
+CREATE TABLE IF NOT EXISTS cms_content(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  poi_id INTEGER NOT NULL, account_id INTEGER NOT NULL,
+  data TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL CHECK(status IN ('draft','pending','approved','rejected')),
+  review_note TEXT DEFAULT '', reviewed_by TEXT,
+  created_at INTEGER, submitted_at INTEGER, reviewed_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS cms_plans(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL, price INTEGER NOT NULL, duration_days INTEGER NOT NULL,
+  description TEXT DEFAULT '', created_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS cms_orders(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id INTEGER NOT NULL, poi_id INTEGER NOT NULL, plan_id INTEGER NOT NULL,
+  amount INTEGER NOT NULL, duration_days INTEGER NOT NULL,
+  status TEXT DEFAULT 'pending' CHECK(status IN ('pending','paid','cancelled')),
+  created_at INTEGER, paid_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS cms_payments(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_id INTEGER UNIQUE NOT NULL, amount INTEGER NOT NULL,
+  method TEXT DEFAULT 'demo', reference TEXT UNIQUE,
+  paid_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS cms_applications(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_id TEXT UNIQUE NOT NULL,
+  answers TEXT NOT NULL DEFAULT '{}',
+  email TEXT DEFAULT '', owner_name TEXT DEFAULT '', business_name TEXT DEFAULT '',
+  tax_id TEXT DEFAULT '', license_file TEXT DEFAULT '', phone TEXT DEFAULT '',
+  address TEXT DEFAULT '', ward_slug TEXT,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
+  review_note TEXT DEFAULT '', reviewed_by TEXT, reviewed_at INTEGER,
+  account_id INTEGER UNIQUE, poi_id INTEGER UNIQUE,
+  email_status TEXT DEFAULT 'none', email_error TEXT DEFAULT '', emailed_at INTEGER,
+  submitted_at INTEGER NOT NULL, created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS cms_applications_ward_status ON cms_applications(ward_slug,status);
+"""
+
 
 def now():
     return int(time.time())
@@ -253,8 +330,8 @@ class _Row(dict):
 
 
 class _Cur:
-    def __init__(self, rows, lastrowid=None):
-        self._rows, self.lastrowid = rows, lastrowid
+    def __init__(self, rows, lastrowid=None, rowcount=-1):
+        self._rows, self.lastrowid, self.rowcount = rows, lastrowid, rowcount
 
     def fetchall(self):
         return self._rows
@@ -332,7 +409,7 @@ class _PgConn:
                 rows = [_Row(cols, [_py_val(v) for v in r]) for r in cur.fetchall()]
                 if ret and rows:
                     last = rows[0][0]
-            return _Cur(rows, last)
+            return _Cur(rows, last, cur.rowcount)
 
     def executescript(self, script):
         for stmt in script.split(";"):
@@ -378,6 +455,8 @@ def get_db():
 MIGRATIONS = {
     "devices": {"location_mode": "TEXT DEFAULT 'auto'", "gps_lat": "REAL", "gps_lng": "REAL", "gps_acc": "REAL",
                 "gps_src": "TEXT", "gps_at": "INTEGER"},
+    "cms_applications": {"owner_name": "TEXT DEFAULT ''", "tax_id": "TEXT DEFAULT ''", "license_file": "TEXT DEFAULT ''"},
+    "cms_accounts": {"birth_date": "TEXT DEFAULT ''", "gender": "TEXT DEFAULT ''"},
 }
 
 
@@ -386,12 +465,28 @@ def init_db():
     conn = connect()
     if IS_PG:
         conn.executescript(_pg_schema(SCHEMA + MEDIA_SCHEMA))
+        conn.execute("ALTER TABLE cms_accounts DROP CONSTRAINT IF EXISTS cms_accounts_role_check")
+        conn.execute("ALTER TABLE cms_accounts ADD CONSTRAINT cms_accounts_role_check "
+                     "CHECK(role IN ('AREA','CONTENT','REVIEW','OWNER','USER'))")
         for table, cols in MIGRATIONS.items():
             for col, typ in cols.items():
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {_pg_schema(typ)}")
         conn.close()
         return
     conn.executescript(SCHEMA)
+    account_schema = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='cms_accounts'").fetchone()[0]
+    if "'REVIEW'" not in account_schema or "'USER'" not in account_schema:
+        conn.execute("ALTER TABLE cms_accounts RENAME TO cms_accounts_old")
+        conn.execute("""CREATE TABLE cms_accounts(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL,
+          full_name TEXT DEFAULT '', email TEXT DEFAULT '', phone TEXT DEFAULT '',
+          role TEXT NOT NULL CHECK(role IN ('AREA','CONTENT','REVIEW','OWNER','USER')),
+          wards TEXT DEFAULT '[]', active INTEGER DEFAULT 1, read_only INTEGER DEFAULT 0,
+          created_by INTEGER, created_at INTEGER, last_login INTEGER
+        )""")
+        conn.execute("INSERT INTO cms_accounts SELECT * FROM cms_accounts_old")
+        conn.execute("DROP TABLE cms_accounts_old")
     for table, cols in MIGRATIONS.items():
         have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
         for col, typ in cols.items():

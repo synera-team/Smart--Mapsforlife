@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex">
+  <meta name="theme-color" content="#0b2233">
+  <title>Maps for Life · Xanh24</title>
+  <link rel="icon" href="/assets/favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/m4l/m4l.css?v=6">
+</head>
+<body>
+  <a class="skip-link" href="#view">Bỏ qua tới nội dung</a>
+  <div id="m4l-app" class="m4l">
+    <header class="topbar">
+      <div class="topbar-inner">
+        <a class="brand" href="/m4l" data-link aria-label="Xanh24 Maps for Life — Trang chủ"><img src="/assets/logo.png" alt="Xanh24"><span>Maps for Life</span></a>
+        <form id="searchForm" class="search" role="search">
+          <span id="searchIcon" aria-hidden="true"></span>
+          <label class="sr-only" for="searchInput">Tìm địa điểm</label>
+          <input id="searchInput" type="search" placeholder="Bạn muốn đi đâu hôm nay?" maxlength="100" autocomplete="off">
+        </form>
+        <nav class="topnav" aria-label="Điều hướng chính">
+          <a href="/m4l" data-link data-nav="home">Trang chủ</a>
+          <a href="/m4l/discover" data-link data-nav="discover">Khám phá</a>
+          <a href="/m4l/world" data-link data-nav="world">Thế giới</a>
+          <a href="/m4l/vouchers" data-link data-nav="vouchers">Voucher</a>
+          <a href="/?mode=web">Bản đồ</a>
+        </nav>
+        <a id="account" class="account" href="/cms/login"><span id="avatar" class="avatar" aria-hidden="true"></span><span id="accountName">Đăng nhập</span></a>
+      </div>
+    </header>
+    <main id="view" class="view" tabindex="-1" aria-live="polite"></main>
+    <nav class="bottomnav" aria-label="Điều hướng trên điện thoại">
+      <a href="/m4l" data-link data-nav="home"><span data-icon="home"></span>Trang chủ</a>
+      <a href="/m4l/discover" data-link data-nav="discover"><span data-icon="compass"></span>Khám phá</a>
+      <a href="/m4l/world" data-link data-nav="world"><span data-icon="layers"></span>Thế giới</a>
+      <a href="/m4l/vouchers" data-link data-nav="vouchers"><span data-icon="qr"></span>Voucher</a>
+      <a id="bottomAccount" href="/cms/login"><span data-icon="user"></span><span id="bottomAccountLabel">Đăng nhập</span></a>
+    </nav>
+  </div>
+  <dialog id="placeDialog" class="place-dialog" aria-labelledby="placeTitle"></dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <script type="module" src="/m4l/m4l.js?v=6"></script>
+  <script type="module" src="/m4l/demo-mode.js"></script>
+</body>
+</html>

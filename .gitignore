@@ -6,3 +6,13 @@ __pycache__/
 # khoá ký APK — không đưa lên kho công khai
 android/keystore/
 android/build/
+
+skills-lock.json
+.agents/
+frontend/node_modules/
+frontend/dist/
+
+# dữ liệu OSM thô tải về khi sinh lưới M4L (tools/m4l_grid/fetch.py)
+tools/m4l_grid/.cache/
+# M4L test scratch databases (Windows can keep them locked during cleanup)
+tests/m4l-*/

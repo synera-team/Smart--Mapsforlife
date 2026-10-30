@@ -34,13 +34,15 @@ Bản đồ số hành chính & dịch vụ công cho màn hình LCD Android tư
 
 ## Chạy thử
 
-Yêu cầu Python 3.10+.
+Yêu cầu Python 3.10+ và Node.js 22+ để build frontend React/JavaScript.
 
 ```bash
 ./run.sh
 # Bản đồ:    http://localhost:8024
 # Kiosk:     http://localhost:8024/?device=HK-01
-# Quản trị:  http://localhost:8024/admin   (tài khoản: admin — mật khẩu trong data/INITIAL_ADMIN.txt)
+# CMS người dùng: http://localhost:8024/cms/login
+# CMS nhân sự:    http://localhost:8024/hrm/login
+# Quản trị cũ:   http://localhost:8024/admin (tài khoản: admin — mật khẩu trong data/INITIAL_ADMIN.txt)
 ```
 
 Đặt trước mật khẩu S0: `XANH24_ADMIN_PASSWORD='MatKhau@2026' ./run.sh`
@@ -83,6 +85,38 @@ Sau khi có tên miền: *Dashboard → Cấu hình → Địa chỉ công khai*
 | `PORT` | Cổng (mặc định 8024) |
 
 Dòng lệnh: `python server/manage.py create-user <user> <S0|S1|CW> <mật khẩu>` · `reset-password <user> <mật khẩu>`.
+
+## CMS quản lý ghim (demo)
+
+Để tạo năm tài khoản thử nghiệm riêng (quản trị, quản lí khu vực, nhân viên nội dung, kiểm duyệt đăng kí, người mua ghim), chạy `python server/seed_cms_demo.py`. Tên đăng nhập và mật khẩu ngẫu nhiên được ghi vào `data/CMS_DEMO_ACCOUNTS.txt` (thư mục `data/` không được commit). Dùng trang đăng nhập phù hợp bên dưới và chọn đúng mục ghi trong file. Lệnh này không đổi mật khẩu tài khoản `admin` hiện có.
+
+Sau khi khởi động Flask, người dùng và tài khoản kiosk đăng nhập tại `/cms/login`; quản trị viên, nhân viên quản lí và kiểm duyệt đăng kí đăng nhập tại `/hrm/login`. Tài khoản `USER` tự đăng ký tại `/cms/login`, chưa có ghim và mở `/dashboard/user`. Tài khoản kiosk mở `/dashboard/kiosk`; các vai trò nhân sự mở `/dashboard/admin`. Đường dẫn `/cms` chuyển sang `/cms/login`. Giao diện CMS dùng lại kiểu bảng, thẻ, biểu mẫu và hộp thoại của trang `/admin`; mã giao diện nằm trong `web/cms`, độc lập với `frontend`. Trang bản đồ Flask có nút “Đăng nhập/ Đăng ký” ở bên phải topbar.
+
+- **Quản trị viên:** chọn “Quản trị viên”, đăng nhập bằng tài khoản Admin S0 hiện có. Admin cấp tài khoản Nhân viên quản lí, Quản trị nội dung và Kiểm duyệt đăng kí, phân khu vực, xem kiosk, quản lý gói và đơn toàn hệ thống.
+- **Nhân viên quản lí:** Admin cấp tài khoản và khu vực. Người này nhận hồ sơ đăng ký đối tác tại mục “Hồ sơ đối tác”, xem giấy tờ, duyệt hoặc từ chối trong khu vực được giao; khi duyệt, xác định tọa độ ghim và cấp tài khoản kiosk. Người này cũng quản lý trạng thái ghim, kiosk, đơn và thanh toán trong khu vực.
+- **Quản trị nội dung:** Admin cấp tài khoản và khu vực. Người này duyệt hoặc từ chối nội dung ghim trong khu vực được giao.
+- **Kiểm duyệt đăng kí:** Admin cấp tài khoản riêng và phân phường theo lựa chọn trong Google Form. Người này chỉ thấy hồ sơ đăng kí thuộc phường được giao; sau khi đối chiếu giấy phép, họ duyệt để cấp tài khoản kiosk và gửi email kết quả, hoặc từ chối kèm lý do. Phạm vi của quản lí khu vực và nhân viên nội dung giữ nguyên.
+- **Tài khoản kiosk:** là tài khoản **người mua ghim**. Người mua chỉnh nội dung, gửi duyệt, đăng ký gói và dùng nút thanh toán demo. Không có giao dịch tiền thật.
+- **Người dùng:** tự tạo tài khoản cá nhân với họ tên, ngày sinh, giới tính (Nam/Nữ/Không tiết lộ), email và số điện thoại. `/dashboard/user` là trang khám phá riêng: có hàng địa điểm du lịch nổi bật, hàng di tích lịch sử, tìm kiếm và lọc theo danh mục/khu vực, xem địa điểm gần mình khi cho phép vị trí và lưu địa điểm. Mục Cá nhân chứa hồ sơ. Danh sách đã lưu được lưu theo tài khoản trong SQLite hoặc PostgreSQL. Trang này dùng dữ liệu địa điểm công khai và chỉ hiển thị ghim còn đủ điều kiện hiển thị. Giao diện nằm tại `web/user`, không thuộc dashboard nhân sự/kiosk và không thay đổi `frontend`. Tài khoản USER chưa được gắn ghim và không có quyền thao tác ghim, nội dung hoặc đơn hàng kiosk.
+
+### Đăng ký đối tác trực tiếp
+
+Tại `/cms/login`, chọn **Tài khoản kiosk → Đăng ký làm đối tác** (hoặc mở `/cms/login?partner=1`). Biểu mẫu nhận họ tên người đại diện, email, số điện thoại, vai trò, tên thương hiệu, danh mục, phường/khu vực, địa chỉ đầy đủ, ngày mở cửa (dropdown Thứ 2–Chủ nhật), giờ mở/đóng cửa, cùng tối đa 8 giấy tờ PDF/Word/ảnh (mỗi tệp tối đa 10 MB). Ô vị trí ghim hiển thị nhưng bị vô hiệu hóa; quản lý khu vực xác định tọa độ khi duyệt. Chỉ những phường đã có tài khoản quản lý khu vực đang hoạt động mới xuất hiện trong danh sách chọn. Giấy tờ được lưu riêng, tải qua API có kiểm tra quyền; tài khoản quản lý chỉ thấy hồ sơ thuộc khu vực được giao. Trong chi tiết hồ sơ, quản lý có thể từ chối và gửi mail hoặc mở bước tạo tài khoản để nhập tên đăng nhập, mật khẩu rồi xác nhận duyệt và gửi thông tin đăng nhập. CMS dùng cấu hình Gmail bên dưới để gửi kết quả. Đặt `CMS_MAIL_MODE=outbox` nếu muốn thử luồng duyệt cục bộ mà chưa gửi Gmail thật.
+
+### Kết nối Google Form cũ và Gmail
+
+Tích hợp Google Form cũ vẫn dùng được để xử lý các hồ sơ đã gửi trước đây; biểu mẫu đối tác mới không cần Apps Script. Form cũ có các trường Email, Tên chủ kinh doanh, Tên công ti/quán/doanh nghiệp, **Phường**, **Nhập địa chỉ Chi tiết**, Mã số thuế và Hồ sơ kinh doanh. Mã Apps Script đọc đúng tên hai câu hỏi Phường và Nhập địa chỉ Chi tiết, rồi chuyển hồ sơ tới nhân viên kiểm duyệt được phân phường. Nếu câu trả lời cũ chưa có Phường hoặc giá trị không khớp lựa chọn đã hỗ trợ, chỉ Admin thấy hồ sơ và có thể phân phường thủ công. Tọa độ ghim được nhân viên nhập khi duyệt và phải nằm trong ranh giới phường đăng kí. Riêng **Văn Miếu - Quốc Tử Giám** có trong Form nhưng chưa có ranh giới trong dữ liệu bản đồ của dự án: hồ sơ vẫn được nhận và phân cho nhân viên, nhưng chưa thể duyệt tạo ghim tại phường này cho đến khi bổ sung ranh giới. Các tệp giấy phép vẫn nằm trên Google Drive của Form; cấp quyền xem cho nhân viên kiểm duyệt tương ứng.
+
+1. Với Flask chạy cục bộ, mở **Apps Script** từ trình chỉnh sửa Google Form; dán mã từ `integrations/google_form_to_cms.gs`. Trong **Script properties**, đặt `CMS_PULL_SECRET` thành chuỗi ngẫu nhiên dài. Triển khai Apps Script dạng **Web app**, chọn **Execute as me** và quyền truy cập **Anyone**. Ghi lại URL `/exec`. Web app kiểm tra khóa trong mỗi yêu cầu; giữ kín khóa.
+2. Đặt `CMS_FORMS_PULL_URL` bằng URL `/exec` ấy và `CMS_FORMS_PULL_SECRET` bằng cùng khóa trong môi trường tiến trình Flask. Khởi động lại Flask. Admin mở mục “Đăng kí ghim” và bấm **Đồng bộ Google Form** để lấy cả hồ sơ cũ lẫn mới. API chống nhận trùng theo mã phản hồi Form. Flask không cần URL công khai cho cách này.
+3. Cấu hình gửi Gmail trong môi trường Flask: `CMS_SMTP_HOST=smtp.gmail.com`, `CMS_SMTP_PORT=587`, `CMS_SMTP_USER=anvan16022005@gmail.com`, `CMS_SMTP_PASSWORD` ([App Password của Gmail](https://support.google.com/mail/answer/185833?hl=en)), `CMS_SMTP_FROM=anvan16022005@gmail.com`, và `CMS_PUBLIC_URL` (URL `/cms/login` mà người mua truy cập được). Không commit mật khẩu vào dự án. Có thể đặt `CMS_MAIL_MODE=outbox` để thử cục bộ; email được ghi vào `data/cms-mail-outbox` thay vì gửi thật.
+4. Admin tạo tài khoản vai trò **Kiểm duyệt đăng kí**, chọn các phường phụ trách. Nếu đã tạo tài khoản kiểm duyệt theo quận ở bản trước, Admin cần sửa phạm vi tài khoản thành các phường tương ứng. Nhân viên đăng nhập tab **Kiểm duyệt đăng kí**. Sau duyệt, CMS tạo một tài khoản kiosk và một ghim cố định; Gmail gửi kết quả, tài khoản và mật khẩu ngẫu nhiên cho người đăng kí. Nếu gửi lỗi, hồ sơ hiển thị “Gửi lỗi” và có nút gửi lại (mật khẩu kiosk được tạo lại trước khi gửi).
+
+Khi Flask có URL HTTPS công khai, có thể chuyển sang chế độ đẩy tự động: đặt `CMS_FORMS_WEBHOOK_SECRET` ở Flask, `CMS_API_URL` và `CMS_WEBHOOK_SECRET` trong Script properties; chạy `installCmsTrigger()` một lần. Trigger gửi hồ sơ mới về API `/api/cms/applications/intake`; chạy thêm `importExistingResponses()` nếu cần nhập hồ sơ cũ. Không bật trigger đẩy tới `localhost`.
+
+Ghim chỉ hiển thị khi đang active, nội dung đã duyệt và gói còn hạn. Deactive ghim chuyển tài khoản cũ sang chỉ đọc; sau đó mới có thể cấp ghim ấy cho tài khoản mới. Địa chỉ và tọa độ ghim không thể sửa từ tài khoản người mua.
+
+Các bảng CMS được tạo khi server khởi động. Nếu Flask đang chạy từ trước khi cập nhật mã, hãy khởi động lại để nạp các route và schema mới.
 
 ## Chạy thật trên www.xanh24.com (Vercel + Postgres)
 
@@ -135,7 +169,19 @@ Khuyến nghị phần cứng: Android 9+, RAM ≥ 3 GB, GPU hỗ trợ WebGL; m
 | Ranh giới | Số hoá từ ảnh bản đồ, sai số ước tính 10–40 m | Thay bằng dữ liệu chính thức của Sở TN&MT khi có |
 
 ## Cấu trúc mã nguồn
+
+Frontend React/JavaScript nằm trong `frontend/`; chạy `npm --prefix frontend ci` và `npm --prefix frontend run build` trước khi chạy Flask cục bộ để dùng giao diện mới. Xem `frontend/README.md` để chạy Vite khi phát triển.
 ```
+frontend/
+  index.html        Điểm vào chung cho bản đồ, quản trị, tải ứng dụng và gọi xe
+  public/           Tài nguyên tĩnh thuộc frontend
+  src/main.jsx      Khởi tạo React
+  src/App.jsx       Ứng dụng gốc
+  src/routes/       Chọn trang theo URL
+  src/pages/        Các trang theo tuyến
+  src/features/     Mã theo chức năng: map, admin, download, ride, kiosk, vr
+  src/utils/        Icon và QR dùng chung
+  src/styles/       CSS của từng trang
 server/            Flask API + SQLite
   app.py           Toàn bộ API công khai & quản trị
   auth.py          Xác thực JWT, ma trận quyền S0/S1/CW, nhật ký
@@ -143,11 +189,7 @@ server/            Flask API + SQLite
   routing.py       Proxy định tuyến + hướng dẫn tiếng Việt
   seed.py          Dữ liệu nền, wards_seed.geojson (51 ranh giới)
   modules/         Module máy chủ (cổng mở rộng)
-web/
-  index.html js/app.js css/app.css   Ứng dụng bản đồ (kiosk/mobile/web)
-  js/vr.js         Trình xem VR360 WebGL   js/qr.js  Tạo mã QR offline   js/osk.js  Bàn phím ảo
-  admin/           Dashboard quản trị
-  go.html          Trang trung gian gọi xe trên điện thoại
+web/               Giao diện cũ dự phòng và tài nguyên dùng chung
   modules/sample/  Module mẫu (iframe)
   vendor/          MapLibre GL JS 5.24 (đóng gói sẵn, chạy offline)
   assets/maps/     Ảnh 50 bản đồ phương án gốc (đối chiếu)
@@ -156,9 +198,31 @@ tests/test_api.py  Kiểm thử luồng phân quyền, phê duyệt, nhập Exce
 docs/              API, module, phương pháp số hoá ranh giới
 ```
 
+## M4L 2.0 (thử nghiệm, mặc định tắt)
+
+Trang khám phá theo cảm xúc tại `/m4l` (Home, hộp mù khám phá ngẫu nhiên), `/m4l/discover` (Mood & tìm kiếm), `/m4l/world` (bản đồ sương mù Fog of War) và `/m4l/admin` (mood, khu vực khám phá, ghim bí ẩn). Thiết kế, audit và kế hoạch: `docs/m4l/`.
+
+- Fog of War phủ **toàn Hà Nội** (126 phường/xã, ~337 nghìn ô 100 m) dựng từ OpenStreetMap; Cầu Giấy giữ làm khu pilot. Ô chỉ mở khi server xác nhận nhiều lần đo GPS đủ chính xác; định vị chỉ chạy khi người dùng bật trên `/m4l/world` và trang đang mở. Chi tiết: `docs/m4l/HANOI_SCALEUP.md`, số liệu: `docs/m4l/HANOI_GRID_REPORT.md`.
+- Dựng lại dữ liệu lưới (cần Internet, chỉ làm khi cập nhật dữ liệu): `python tools/m4l_grid/fetch.py --roads` rồi `python tools/m4l_grid/build.py`. Lần khởi động đầu sau khi có dữ liệu chạy migration v3 (sao lưu trước, nạp lưới, chuyển tiến độ Cầu Giấy sang Hà Nội).
+- Random mặc định quay trong nhóm đối tác VIP đang chạy chiến dịch (có nhãn Tài trợ). Khi không có VIP, random rơi về gợi ý tự nhiên đã gắn mood và ghi rõ “không tài trợ”. Mỗi tài khoản có 10 lượt/24 giờ. Các ngưỡng chỉnh qua setting JSON `m4l_config` (xem `DEFAULT_CONFIG` trong `server/m4l_service.py`).
+- Thương mại (migration v4): voucher đếm ngược (`/m4l/vouchers`), cổng đối tác và xác nhận voucher tại quầy (`/m4l/partner`, `/m4l/v/<mã>`), màn hình trạm (`/m4l/station`), duyệt chiến dịch / khóa kiosk / analytics trong `/m4l/admin`. Không có thanh toán; POS là bản giả lập. Demo tái lập được: `server/seed_m4l_demo.py` (từ chối chạy trên `data/xanh24.db`). Xem `docs/m4l/DEMO_GUIDE.md`, `API_CONTRACT.md`, `RELEASE_READINESS.md`.
+
+- Bật bằng biến môi trường `XANH24_M4L_ENABLED=1`. Khi tắt, mọi route `/m4l*`, `/api/m4l/*` trả 404 và không bảng nào được tạo.
+- Lần khởi động đầu khi bật cờ: sao lưu SQLite vào `data/backups/` rồi tạo bảng `m4l_*` và 4 mood mẫu (có thể sửa/tắt). Không tạo hoặc gán địa điểm.
+- Quản lý: đăng nhập `/hrm/login` (mục Quản trị viên) rồi mở `/m4l/admin`. Admin S0 thêm/sửa mood; Quản trị nội dung gán mood cho địa điểm trong phường được giao.
+- Người dùng đăng nhập ở `/cms/login`; mở lại `/m4l` để thấy lời chào theo tên.
+- Migration: `python server/m4l_migrations.py status | backup | migrate | downgrade --to 0 --yes` (downgrade chỉ gỡ bảng `m4l_*`, có sao lưu trước).
+
+```powershell
+$env:XANH24_M4L_ENABLED = "1"; .\.venv\Scripts\python.exe server\app.py   # http://localhost:8024/m4l
+```
+
 ## Kiểm thử
 ```bash
 python tests/test_api.py
+python tests/test_m4l.py
+python tests/test_m4l_phase2.py
+python tests/test_m4l_hanoi.py
 ```
 
 ## Nhật ký thay đổi

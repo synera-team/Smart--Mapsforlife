@@ -1,0 +1,213 @@
+{
+ "base": "http://localhost:8180",
+ "checks": [
+  "10 trang chính trả 200 (gồm /cms/login, /hrm/login, /)",
+  "không tải được CSDL, secret.key, file mật khẩu hay mã nguồn qua web",
+  "không có phiên demo cho quản trị hệ thống (S0)",
+  "chế độ demo bật, nhãn “[DEMO] – Dữ liệu minh họa”",
+  "khách bấm Đăng nhập trong hộp mù → /demo?as=user&next=%2Fm4l → về /m4l đã đăng nhập (trước đây link này là “/${loginUrl()}” → 404)",
+  "trang đăng nhập hiện form và tự chọn đúng mục theo trang đích (đối tác → Tài khoản kiosk, còn lại → Người dùng)",
+  "đăng nhập USER bằng mật khẩu qua form → về /m4l, có lời chào",
+  "đúng mật khẩu nhưng chọn nhầm mục → thông báo chỉ rõ mục đúng"
+ ],
+ "journeys": {
+  "0": [
+   "Trang /demo có 7 lựa chọn; một chạm “Bắt đầu trải nghiệm” → /m4l, lời chào “Xin chào Hùng!”",
+   "Tải lại trang: vẫn giữ phiên đăng nhập"
+  ],
+  "A": [
+   "Mood “Góc chạy deadline”: ô Tài trợ (True) + 3 địa điểm tự nhiên",
+   "Chi tiết “[DEMO] Cà phê Trang Sách”, Chỉ đường → /?mode=web&poi=67&dir=foot&locate=1"
+  ],
+  "B": [
+   "Lắc máy (giả lập cảm biến) → hộp mù trả 1 địa điểm “[DEMO] Quán Bún Đêm Phố Cổ”: Chọn ngẫu nhiên trong 2 đối tác VIP đang chạy chiến dịch · còn 9 lượt trong 24 giờ.",
+   "Nhận voucher: đồng hồ 59:59 → 59:58; QR giải mã được thành /m4l/v/DeRWcc4…; có nhãn [DEMO]"
+  ],
+  "D": [
+   "Tab nhân viên quán (phiên riêng của tab) xác nhận: ✓ Đã xác nhận sử dụng",
+   "Quét lần hai bị từ chối: ✕ Voucher đã được sử dụng",
+   "Quay lại tab khách: vẫn đăng nhập, ví hiện “Đã sử dụng”"
+  ],
+  "C": [
+   "Định vị (cấp quyền GPS) mở khóa ô và hé lộ ghim bí ẩn “Công viên Cầu Giấy”",
+   "Tiến độ Hà Nội: “Đã khám phá ≈ 0% Hà Nội” → “Đã khám phá ≈ <0,01% Hà Nội”"
+  ],
+  "E": [
+   "Thẻ “Đối tác” (một chạm) → tạo chiến dịch qua form → Gửi duyệt → Chờ duyệt",
+   "Thẻ “Quản trị & Analytics” (một chạm, quyền khu vực) → duyệt → Đang chạy; chiến dịch tự mang nhãn DEMO",
+   "Tab đối tác vẫn giữ phiên sau khi tab khác mở quản trị; chiến dịch Đang chạy"
+  ],
+  "F": [
+   "Thẻ “Mô phỏng kiosk” → màn hình trạm hiện QR ngay (không cần nhập khóa); QR giải mã ra đường dẫn check-in",
+   "Khách chưa đăng nhập bấm Đăng nhập → vào phiên khách demo và quay lại đúng trang trạm → ưu đãi: ĐỐI TÁC\n[DEMO] TIỆM BÁNH SÁNG SỚM · CÁCH TRẠM 80 M",
+   "Tiệm bánh [DEMO] xác nhận voucher nhận từ trạm (POS giả lập)",
+   "Trạm tự đổi mã sau lượt quét: True",
+   "Phễu analytics: Hiển thị | 4 | Quét QR tại trạm | 1 | Nhận voucher | 2 | Bấm chỉ đường | 0 | Đổi tại quầy | 2"
+  ]
+ },
+ "screens": {
+  "360x800 demo": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "360x800 home": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "360x800 discover": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "360x800 world": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "360x800 vouchers": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "360x800 partner": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "360x800 admin": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "360x800 station": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "390x844 demo": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "390x844 home": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "390x844 discover": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "390x844 world": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "390x844 vouchers": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "390x844 partner": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "390x844 admin": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "390x844 station": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "430x932 demo": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "430x932 home": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "430x932 discover": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "430x932 world": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "430x932 vouchers": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "430x932 partner": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "430x932 admin": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "430x932 station": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "768x1024 demo": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "768x1024 home": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "768x1024 discover": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "768x1024 world": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "768x1024 vouchers": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "768x1024 partner": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "768x1024 admin": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "768x1024 station": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "1280x800 demo": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "1280x800 home": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "1280x800 discover": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "1280x800 world": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "1280x800 vouchers": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "1280x800 partner": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "1280x800 admin": {
+   "overflow_px": 0,
+   "js_errors": []
+  },
+  "1280x800 station": {
+   "overflow_px": 0,
+   "js_errors": []
+  }
+ },
+ "errors": [
+  "http://localhost:8180/cms/login: Failed to load resource: the server responded with a status of 401 (UNAUTHORIZED)"
+ ]
+}

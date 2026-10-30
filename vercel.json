@@ -1,8 +1,9 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "npm --prefix frontend ci && npm --prefix frontend run build",
   "functions": {
     "api/index.py": {
-      "includeFiles": "{server/**,web/**}"
+      "includeFiles": "{server/**,web/**,frontend/dist/**}"
     }
   },
   "routes": [

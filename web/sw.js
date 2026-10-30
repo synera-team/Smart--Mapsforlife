@@ -5,10 +5,10 @@
  * - Ảnh tải lên (/uploads): lưu lâu dài.
  * Không lưu: trang & API quản trị, các lệnh POST.
  */
-const VERSION = 'x24-1.3.0';
+const VERSION = 'x24-react-1.0.0';
 const SHELL = `${VERSION}-shell`, DATA = `${VERSION}-data`, TILES = 'x24-tiles-v1', MEDIA = 'x24-media-v1';
-const SHELL_FILES = ['/', '/css/app.css', '/js/app.js', '/js/icons.js', '/js/qr.js', '/js/vr.js', '/js/osk.js',
-  '/vendor/maplibre-gl.js', '/vendor/maplibre-gl.css', '/assets/logo.png', '/assets/favicon.png', '/manifest.webmanifest', '/go.html'];
+const SHELL_FILES = ['/', '/vendor/maplibre-gl.js', '/vendor/maplibre-gl.css',
+  '/assets/logo.png', '/assets/favicon.png', '/manifest.webmanifest'];
 const TILE_HOSTS = /(^|\.)(openfreemap\.org|tile\.openstreetmap\.org|arcgisonline\.com|basemaps\.cartocdn\.com|fonts\.gstatic\.com|fonts\.googleapis\.com)$/;
 const MAX_TILES = 6000, MAX_MEDIA = 800;
 
@@ -60,7 +60,7 @@ self.addEventListener('fetch', (e) => {
   const same = url.origin === self.location.origin;
   if (same) {
     const p = url.pathname;
-    if (p.startsWith('/admin') || p.startsWith('/api/admin') || p.startsWith('/api/auth') || p === '/sw.js') return;
+    if (p.startsWith('/admin') || p.startsWith('/cms') || p.startsWith('/hrm') || p.startsWith('/dashboard') || p.startsWith('/api/admin') || p.startsWith('/api/auth') || p === '/sw.js') return;
     if (req.mode === 'navigate') { e.respondWith(networkFirst(req, SHELL, 5000).catch(() => caches.match('/'))); return; }
     if (p.startsWith('/api/public/')) {
       if (p.startsWith('/api/public/version')) return; // luôn hỏi máy chủ
