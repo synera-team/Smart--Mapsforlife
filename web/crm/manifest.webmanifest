@@ -1,0 +1,15 @@
+{
+  "name": "Xanh24 CRM — Quản lý xanh24.com",
+  "short_name": "Xanh24 CRM",
+  "description": "Quản lý khách hàng, hợp đồng quảng cáo, màn hình kiosk và nội dung của Xanh24 - Maps for Life",
+  "start_url": "/crm/",
+  "scope": "/crm/",
+  "display": "standalone",
+  "background_color": "#F3F6FA",
+  "theme_color": "#14346F",
+  "lang": "vi",
+  "icons": [
+    {"src": "/crm/icon-192.webp", "sizes": "192x192", "type": "image/webp", "purpose": "any"},
+    {"src": "/crm/icon-512.webp", "sizes": "512x512", "type": "image/webp", "purpose": "any"}
+  ]
+}
