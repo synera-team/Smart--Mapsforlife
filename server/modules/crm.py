@@ -81,6 +81,46 @@ def day_key(t):
     return time.strftime("%Y-%m-%d", time.gmtime(t + TZ))
 
 
+def _bootstrap_admin(q, ex, ctx, auth):
+    """Khôi phục quyền quản trị khi không còn ai nhớ mật khẩu.
+
+    Đặt biến môi trường (VD trên Vercel)  XANH24_BOOTSTRAP_S0 = "tendangnhap:MatKhau@2026"
+    → khi khởi động, tạo tài khoản S0 đó (hoặc đặt lại mật khẩu nếu đã có). Chỉ áp dụng MỘT LẦN cho mỗi giá trị
+    (lưu dấu băm trong cài đặt), nên đổi mật khẩu sau đó không bị ghi đè. Đăng nhập xong nên xoá biến này.
+    Không đụng tới các tài khoản khác (kể cả 'admin').
+    """
+    import hashlib
+    raw = (os.environ.get("XANH24_BOOTSTRAP_S0") or "").strip()
+    if not raw or ":" not in raw:
+        return
+    username, password = raw.split(":", 1)
+    username = username.strip().lower()
+    if not username or not all(c.isalnum() or c in "._-" for c in username):
+        print("  ! XANH24_BOOTSTRAP_S0: tên đăng nhập không hợp lệ")
+        return
+    prob = auth.password_problem(password)
+    if prob:
+        print(f"  ! XANH24_BOOTSTRAP_S0: {prob}")
+        return
+    mark = hashlib.sha256(("x24-bootstrap|" + raw).encode()).hexdigest()
+    if (ctx.get_setting("crm_bootstrap_s0", "") or "") == mark:
+        return
+    t = int(time.time())
+    u = q("SELECT id FROM users WHERE lower(username)=?", (username,), one=True)
+    if u:
+        ex("UPDATE users SET password_hash=?, role='S0', active=1, must_change_password=0 WHERE id=?", (auth.hash_password(password), u["id"]))
+    else:
+        ex("INSERT INTO users(username,password_hash,full_name,role,active,must_change_password,created_at) VALUES(?,?,?,?,?,?,?)",
+           (username, auth.hash_password(password), "Quản trị CRM", "S0", 1, 0, t))
+    ctx.set_setting("crm_bootstrap_s0", mark)
+    try:
+        ex("INSERT INTO audit(user_id,username,action,entity,entity_id,detail,ip,at) VALUES(?,?,?,?,?,?,?,?)",
+           (None, "system", "user.bootstrap", "user", username, "{}", "", t))
+    except Exception:
+        pass
+    print(f"  + XANH24_BOOTSTRAP_S0: đã cấp tài khoản S0 '{username}'")
+
+
 def register(app, ctx):
     import auth
     for p, r in {"crm.read": "CW", "crm.edit": "CW", "crm.finance": "S1", "crm.delete": "S1"}.items():
@@ -89,6 +129,7 @@ def register(app, ctx):
         ctx.ex(s)
 
     q, ex, require, audit = ctx.q, ctx.ex, ctx.require, ctx.audit
+    _bootstrap_admin(q, ex, ctx, auth)
 
     import db as _db
     crm_dir = os.path.join(_db.BASE_DIR, "web", "crm")
