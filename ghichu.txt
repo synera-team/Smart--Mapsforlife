@@ -1,0 +1,3 @@
+Xanh24 CRM - ghi chú triển khai
+- 27/11/2026: thêm biến XANH24_SECRET trên Vercel (khoá ký phiên đăng nhập dùng chung cho mọi máy chủ).
+- Tệp này chỉ dùng để kích hoạt Vercel triển khai lại, có thể xoá sau.
